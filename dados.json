@@ -1,0 +1,168 @@
+{
+ "loja": {
+  "nome": "LeloLabs",
+  "dono": "Francisco Felix Lelo",
+  "slogan": "Software à medida para o seu negócio crescer.",
+  "sobre": "Sou o Francisco Felix Lelo, programador em Luanda. Crio sites, lojas virtuais, sistemas de gestão e soluções com câmaras inteligentes para empresas angolanas.",
+  "stack": "Python · PySide6 · OpenCV · Web",
+  "local": "Ingombotas, Luanda, Angola",
+  "telAlt": ""
+ },
+ "canais": [
+  {
+   "id": "whatsapp",
+   "nome": "WhatsApp",
+   "valor": "952633132",
+   "ativo": true,
+   "horario": "Todos os dias, 8h às 20h"
+  },
+  {
+   "id": "sms",
+   "nome": "SMS",
+   "valor": "9292354661",
+   "ativo": true,
+   "horario": "Segunda a sábado"
+  },
+  {
+   "id": "chamada",
+   "nome": "Chamada",
+   "valor": "9292354661",
+   "ativo": true,
+   "horario": "Segunda a sexta, 9h às 17h"
+  },
+  {
+   "id": "email",
+   "nome": "Email",
+   "valor": "franciscofelixlelo16@gmail.com",
+   "ativo": true,
+   "horario": "Resposta em até 24 horas"
+  }
+ ],
+ "produtos": [
+  {
+   "id": "mv1cw5e5htrhj",
+   "nome": "Publicidade de produtos",
+   "categoria": "Publicidade",
+   "preco": 15000,
+   "unidade": "Pagamento parcelar",
+   "descricao": "",
+   "itens": [],
+   "img": "",
+   "destaque": false,
+   "ativo": true
+  },
+  {
+   "id": "mv1cxcchzxanr",
+   "nome": "Novo plano",
+   "categoria": "Geral",
+   "preco": null,
+   "unidade": "",
+   "descricao": "",
+   "itens": [],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  },
+  {
+   "id": "p1",
+   "nome": "Site de apresentação",
+   "categoria": "Sites",
+   "preco": 75000,
+   "unidade": "pagamento único",
+   "descricao": "Um site profissional para mostrar o seu negócio e receber contactos.",
+   "itens": [
+    "Até 5 secções",
+    "Adaptado a telemóvel",
+    "Botão de WhatsApp",
+    "Entrega em 7 dias"
+   ],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  },
+  {
+   "id": "p2",
+   "nome": "Loja virtual",
+   "categoria": "Sites",
+   "preco": 180000,
+   "unidade": "pagamento único",
+   "descricao": "Catálogo com carrinho e pedidos por WhatsApp, SMS ou email.",
+   "itens": [
+    "Catálogo com fotos",
+    "Carrinho de compras",
+    "Painel de administração",
+    "Histórico de vendas"
+   ],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  },
+  {
+   "id": "p3",
+   "nome": "Sistema de gestão e vendas",
+   "categoria": "Sistemas",
+   "preco": 250000,
+   "unidade": "a partir de",
+   "descricao": "Ponto de venda para lojas e restaurantes: vendas, stock, clientes e relatórios em Kz.",
+   "itens": [
+    "Vendas e faturação",
+    "Controlo de stock",
+    "Relatórios em Kz",
+    "Formação da equipa"
+   ],
+   "img": "",
+   "destaque": true,
+   "ativo": false
+  },
+  {
+   "id": "p4",
+   "nome": "Câmaras com reconhecimento facial",
+   "categoria": "Visão computacional",
+   "preco": null,
+   "unidade": "projeto personalizado",
+   "descricao": "Controlo de acessos e presenças com câmaras IP e reconhecimento facial.",
+   "itens": [
+    "Estudo do local",
+    "Instalação do sistema",
+    "Relatórios de entradas",
+    "Suporte técnico"
+   ],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  },
+  {
+   "id": "p5",
+   "nome": "Manutenção mensal",
+   "categoria": "Suporte",
+   "preco": 25000,
+   "unidade": "por mês",
+   "descricao": "Atualizações, cópias de segurança e correção de problemas.",
+   "itens": [
+    "Cópias de segurança",
+    "Atualizações",
+    "Suporte por WhatsApp"
+   ],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  },
+  {
+   "id": "p6",
+   "nome": "Formação da equipa",
+   "categoria": "Suporte",
+   "preco": 15000,
+   "unidade": "por sessão",
+   "descricao": "Sessão prática de 2 horas para a sua equipa usar o sistema com confiança.",
+   "itens": [
+    "Sessão de 2 horas",
+    "Presencial ou online",
+    "Manual simples"
+   ],
+   "img": "",
+   "destaque": false,
+   "ativo": false
+  }
+ ],
+ "trabalhos": []
+}
