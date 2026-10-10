@@ -144,6 +144,8 @@ create table if not exists public.pedidos (
   atualizado timestamptz not null default now()
 );
 create index if not exists pedidos_cliente on public.pedidos (cliente_id);
+alter table public.pedidos add column if not exists parcelas int not null default 1 check (parcelas between 1 and 6);
+alter table public.pedidos add column if not exists parcelas_pagas int not null default 0 check (parcelas_pagas >= 0);
 alter table public.pedidos enable row level security;
 drop policy if exists "pedidos: ver os próprios ou admin" on public.pedidos;
 create policy "pedidos: ver os próprios ou admin" on public.pedidos for select using (cliente_id = auth.uid() or public.e_admin());
@@ -178,6 +180,9 @@ begin
   new.itens := linhas;
   new.total := soma;
   new.tem_consulta := consulta;
+  -- Abaixo de 1.000 Kz não há parcelamento; acima, até 6 prestações.
+  new.parcelas := case when soma >= 1000 then greatest(1, least(6, coalesce(new.parcelas, 1))) else 1 end;
+  new.parcelas_pagas := 0;
   new.codigo := 'LL-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
   new.criado := now();
   new.atualizado := now();
@@ -187,7 +192,13 @@ drop trigger if exists antes_de_criar_pedido on public.pedidos;
 create trigger antes_de_criar_pedido before insert on public.pedidos for each row execute function public.preparar_pedido();
 
 create or replace function public.marcar_atualizado() returns trigger language plpgsql as $$
-begin new.atualizado := now(); return new; end $$;
+begin
+  new.atualizado := now();
+  if new.total < 1000 then new.parcelas := 1; end if;
+  new.parcelas := greatest(1, least(6, new.parcelas));
+  new.parcelas_pagas := greatest(0, least(new.parcelas, new.parcelas_pagas));
+  return new;
+end $$;
 drop trigger if exists antes_de_alterar_pedido on public.pedidos;
 create trigger antes_de_alterar_pedido before update on public.pedidos for each row execute function public.marcar_atualizado();
 
@@ -206,6 +217,8 @@ create table if not exists public.mensagens (
   criado timestamptz not null default now()
 );
 create index if not exists mensagens_cliente on public.mensagens (cliente_id, criado);
+alter table public.mensagens add column if not exists unica boolean not null default false;   -- visualização única
+alter table public.mensagens add column if not exists vista_em timestamptz;
 alter table public.mensagens enable row level security;
 drop policy if exists "mensagens: ver as próprias ou admin" on public.mensagens;
 create policy "mensagens: ver as próprias ou admin" on public.mensagens for select using (cliente_id = auth.uid() or public.e_admin());
@@ -241,6 +254,9 @@ begin
   v := replace(to_char(new.total, 'FM999,999,999,990'), ',', '.') || ' Kz';
   if tg_op = 'INSERT' then
     t := 'Recebi o seu pedido ' || new.codigo || '. Vou analisá-lo e responder em breve.';
+  elsif new.parcelas_pagas > old.parcelas_pagas and new.estado = 'validado' then
+    t := 'Prestação ' || new.parcelas_pagas || '/' || new.parcelas || ' do pedido ' || new.codigo || ' confirmada. Obrigado! '
+      || 'Quando pagar a próxima, envie o comprovativo na página do pedido.';
   elsif new.estado is distinct from old.estado then
     if old.estado = 'comprovativo' and new.estado = 'validado' then
       t := 'O comprovativo do pedido ' || new.codigo || ' não foi aceite. '
@@ -248,6 +264,7 @@ begin
     else
       t := case new.estado
         when 'validado' then 'O pedido ' || new.codigo || ' foi validado. Valor a pagar: ' || v
+          || case when new.parcelas > 1 then ' em ' || new.parcelas || ' prestações de ' || replace(to_char(ceil(new.total / new.parcelas), 'FM999,999,999,990'), ',', '.') || ' Kz' else '' end
           || case when new.metodo_pagamento <> '' then ' por ' || new.metodo_pagamento else '' end
           || '. Depois de pagar, envie o comprovativo na página do pedido.'
           || case when new.nota_admin <> '' then ' Nota: ' || new.nota_admin else '' end
@@ -290,6 +307,9 @@ insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_typ
   ('anexos',   'anexos',   false, 10485760, array['image/jpeg','image/png','image/webp','application/pdf']),
   ('entregas', 'entregas', false, 52428800, null)
 on conflict (id) do nothing;
+update storage.buckets set file_size_limit = 52428800,
+  allowed_mime_types = array['image/jpeg','image/png','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']
+  where id = 'anexos';
 
 drop policy if exists "publico: admin envia" on storage.objects;
 create policy "publico: admin envia" on storage.objects for insert to authenticated with check (bucket_id = 'publico' and public.e_admin());
@@ -299,7 +319,29 @@ create policy "publico: admin apaga" on storage.objects for delete to authentica
 -- anexos/<id do cliente>/... : cada cliente só vê e envia na sua pasta
 drop policy if exists "anexos: ler" on storage.objects;
 create policy "anexos: ler" on storage.objects for select to authenticated using (
-  bucket_id = 'anexos' and ((storage.foldername(name))[1] = auth.uid()::text or public.e_admin()));
+  bucket_id = 'anexos' and (
+    public.e_admin()
+    or ((storage.foldername(name))[1] = auth.uid()::text and position('/unica/' in name) = 0)
+    or exists (select 1 from public.mensagens m where m.anexo_path = name and m.unica and m.autor = 'admin'
+               and m.cliente_id = auth.uid() and m.vista_em > now() - interval '2 minutes')));
+
+-- Abrir uma mensagem de visualização única: só o destinatário, e só uma vez (janela de 2 minutos).
+create or replace function public.abrir_unica(mid bigint) returns text
+language plpgsql security definer set search_path = public as $$
+declare m record;
+begin
+  select * into m from public.mensagens where id = mid and unica;
+  if not found then raise exception 'Mensagem não encontrada.'; end if;
+  if (m.autor = 'admin' and m.cliente_id <> auth.uid()) or (m.autor = 'cliente' and not public.e_admin()) then
+    raise exception 'Sem acesso a esta mensagem.';
+  end if;
+  if m.vista_em is not null and m.vista_em < now() - interval '2 minutes' then
+    raise exception 'Esta mensagem de visualização única já foi aberta.';
+  end if;
+  if m.vista_em is null then update public.mensagens set vista_em = now(), lida = true where id = mid; end if;
+  return m.anexo_path;
+end $$;
+grant execute on function public.abrir_unica(bigint) to authenticated;
 drop policy if exists "anexos: enviar" on storage.objects;
 create policy "anexos: enviar" on storage.objects for insert to authenticated with check (
   bucket_id = 'anexos' and ((storage.foldername(name))[1] = auth.uid()::text or public.e_admin()));

@@ -296,9 +296,20 @@
     const notas = LL.campo('pd-notas', 'Descreva o que precisa (opcional)', '', { area: true, max: '1000', ph: 'Ex.: quero o site com as cores da minha empresa e pronto até ao fim do mês.' });
     const erro = h('div', { class: 'small text-danger', role: 'alert' });
     const botao = h('button', { class: 'btn btn-primary btn-lg', type: 'submit', text: 'Enviar pedido' });
+    // Parcelamento: só a partir de 1.000 Kz (o servidor confirma esta regra)
+    let parcelas = 1;
+    const blocoParcelas = r.total >= 1000
+      ? h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Pagar de uma vez ou parcelar?' }),
+          h('div', { class: 'parcelas-opcoes' }, [1, 2, 3, 4, 6].map(n => {
+            const id = 'pd-p-' + n, x = h('input', { class: 'btn-check', type: 'radio', name: 'pd-parc', id, autocomplete: 'off' });
+            x.checked = n === 1; x.addEventListener('change', () => { parcelas = n; });
+            return [x, h('label', { class: 'btn btn-outline-primary btn-sm', for: id, text: n === 1 ? 'De uma vez · ' + LL.kz(r.total) : n + '× de ' + LL.kz(Math.ceil(r.total / n)) })];
+          })),
+          r.consulta ? h('div', { class: 'form-text', text: 'Se o valor final mudar na validação, as prestações são recalculadas.' }) : null)
+      : h('div', { class: 'small text-body-secondary', text: 'Valores abaixo de 1.000 Kz são pagos de uma só vez, sem parcelamento.' });
     mPedido.corpo.replaceChildren(h('form', { class: 'd-grid gap-3', onsubmit: async e => {
       e.preventDefault(); erro.textContent = ''; botao.disabled = true;
-      const { data, error } = await sb.from('pedidos').insert({ itens: carrinho.map(i => ({ id: i.id, qtd: i.qtd })), notas: notas.campo.value.trim(), metodo_pagamento: escolhido }).select().single();
+      const { data, error } = await sb.from('pedidos').insert({ itens: carrinho.map(i => ({ id: i.id, qtd: i.qtd })), notas: notas.campo.value.trim(), metodo_pagamento: escolhido, parcelas }).select().single();
       botao.disabled = false;
       if (error) { erro.textContent = LL.erro(error); return; }
       carrinho = []; guardarCarrinho(); mPedido.fechar();
@@ -314,7 +325,7 @@
         r2.addEventListener('change', () => { escolhido = m.nome; mostrarDetalhes(); });
         return h('div', { class: 'col-sm-6' }, h('label', { class: 'opcao-canal', for: 'pd-m-' + i }, r2, h('span', { class: 'fw-semibold', text: m.nome })));
       })), h('div', { class: 'mt-2' }, h('div', { class: 'form-text mb-1', text: 'Dados para pagamento (pague só depois de o pedido ser validado):' }), detalhes)) : null,
-      notas, erro,
+      blocoParcelas, notas, erro,
       h('p', { class: 'small text-body-secondary mb-0', text: 'Primeiro valido o pedido e confirmo o valor final. Depois paga e envia o comprovativo aqui no site.' }),
       h('div', { class: 'd-flex justify-content-end gap-2' }, h('button', { class: 'btn btn-outline-secondary', type: 'button', 'data-bs-dismiss': 'modal', text: 'Voltar' }), botao)));
     mostrarDetalhes(); mPedido.abrir();
@@ -359,7 +370,7 @@
       try {
         const path = sessao.user.id + '/comprovativos/' + p.codigo + '-' + Date.now() + '-' + LL.nomeSeguro(f.name);
         const up = await sb.storage.from('anexos').upload(path, f, { contentType: f.type }); if (up.error) throw up.error;
-        const { error } = await sb.from('mensagens').insert({ cliente_id: sessao.user.id, autor: 'cliente', tipo: 'comprovativo', pedido_id: p.id, texto: 'Comprovativo de pagamento do pedido ' + p.codigo, anexo_path: path, anexo_nome: f.name.slice(0, 120), anexo_tipo: f.type });
+        const { error } = await sb.from('mensagens').insert({ cliente_id: sessao.user.id, autor: 'cliente', tipo: 'comprovativo', pedido_id: p.id, texto: 'Comprovativo de pagamento do pedido ' + p.codigo + (p.parcelas > 1 ? ' (prestação ' + ((p.parcelas_pagas || 0) + 1) + '/' + p.parcelas + ')' : ''), anexo_path: path, anexo_nome: f.name.slice(0, 120), anexo_tipo: f.type });
         if (error) throw error;
         LL.aviso('Comprovativo enviado. Vou confirmar o pagamento em breve.'); contaPedidos(contentor);
       } catch (er) { estadoEnvio.className = 'small text-danger'; estadoEnvio.textContent = LL.erro(er); }
@@ -369,9 +380,11 @@
       LL.linhaTempo(p.estado),
       h('div', { class: 'small' }, p.itens.map(i => h('div', { class: 'd-flex justify-content-between gap-2' }, h('span', { text: i.qtd + ' × ' + i.nome }), h('span', { class: 'mono', text: i.preco == null ? 'sob consulta' : LL.kz(i.preco * i.qtd) }))),
         h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total a pagar' }), h('span', { text: LL.kz(p.total) + (p.tem_consulta && p.estado === 'pendente' ? ' + sob consulta' : '') }))),
+      p.parcelas > 1 ? h('div', { class: 'small' }, h('strong', { text: p.parcelas + ' prestações de ' + LL.kz(Math.ceil(p.total / p.parcelas)) }), ' · pagas ' + (p.parcelas_pagas || 0) + ' de ' + p.parcelas) : null,
       p.nota_admin ? h('div', { class: 'alert alert-info mb-0 small', text: p.nota_admin }) : null,
       podePagar ? h('div', { class: 'caixa-pagamento d-grid gap-2' },
         h('div', { class: 'fw-semibold', text: 'Pagamento: ' + (p.metodo_pagamento || 'a combinar') }),
+        p.parcelas > 1 ? h('div', { text: 'Agora: prestação ' + ((p.parcelas_pagas || 0) + 1) + ' de ' + p.parcelas + ' — ' + LL.kz(Math.ceil(p.total / p.parcelas)) }) : null,
         metodo ? h('div', { class: 'mensagem-pronta', text: metodo.detalhes }) : null,
         p.estado === 'comprovativo' ? h('div', { class: 'small text-body-secondary', text: 'Comprovativo recebido. Pode enviar outro se for preciso.' }) : null,
         h('div', { class: 'd-flex gap-2 flex-wrap' }, h('label', { class: 'btn btn-primary' }, LL.icone('clipe'), ' Enviar comprovativo', ficheiro)), estadoEnvio) : null,

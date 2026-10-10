@@ -174,56 +174,125 @@ window.LL = (function () {
   };
 
   // ---------- Chat (usado pelo cliente e pelo administrador) ----------
+  const TIPOS_ANEXO = /^(image\/(jpeg|png|webp)|application\/pdf|video\/(mp4|webm|quicktime))$/;
+  const urlAnexo = async (path, seg = 3600) => { const { data } = await LL.sb.storage.from('anexos').createSignedUrl(path, seg); return data ? data.signedUrl : null; };
+  // Mostra uma imagem/vídeo em ecrã inteiro (usado na visualização única)
+  LL.verEcraInteiro = (url, tipo, nome) => {
+    const fechar = () => { caixa.remove(); document.removeEventListener('keydown', tecla); };
+    const tecla = e => { if (e.key === 'Escape') fechar(); };
+    const media = /^video\//.test(tipo) ? h('video', { src: url, controls: true, autoplay: true, playsinline: true, controlslist: 'nodownload', class: 'ecra-media' })
+      : /^image\//.test(tipo) ? h('img', { src: url, alt: nome || 'Imagem', class: 'ecra-media', draggable: 'false' })
+      : h('a', { class: 'btn btn-light', href: url, target: '_blank', rel: 'noopener', text: 'Abrir ' + (nome || 'ficheiro') });
+    const caixa = h('div', { class: 'ecra-inteiro', role: 'dialog', 'aria-label': nome || 'Anexo', oncontextmenu: e => e.preventDefault() },
+      h('button', { class: 'btn btn-light ecra-fechar', type: 'button', onclick: fechar, text: 'Fechar' }), media);
+    document.body.append(caixa); document.addEventListener('keydown', tecla);
+  };
+
   LL.chat = ({ clienteId, souAdmin, textoInicial = '' }) => {
     const sb = LL.sb, eu = souAdmin ? 'admin' : 'cliente';
     const lista = h('div', { class: 'chat-lista', role: 'log', 'aria-live': 'polite', 'aria-label': 'Mensagens' });
+    const escrevendo = h('div', { class: 'chat-escrevendo', 'aria-live': 'polite' });
     const texto = h('textarea', { class: 'form-control', rows: '2', maxlength: '2000', placeholder: 'Escreva uma mensagem…', 'aria-label': 'Mensagem' });
     texto.value = textoInicial;
-    const ficheiro = h('input', { type: 'file', class: 'd-none', accept: 'image/jpeg,image/png,image/webp,application/pdf' });
-    const infoAnexo = h('div', { class: 'small text-body-secondary' });
+    const ficheiro = h('input', { type: 'file', class: 'd-none', accept: 'image/jpeg,image/png,image/webp,application/pdf,video/mp4,video/webm,video/quicktime' });
+    const unica = h('input', { class: 'form-check-input', type: 'checkbox', id: 'chat-unica-' + clienteId });
+    const infoAnexo = h('div', { class: 'small text-body-secondary d-flex align-items-center gap-2 flex-wrap' });
     const enviar = h('button', { class: 'btn btn-primary', type: 'submit', 'aria-label': 'Enviar' }, LL.icone('enviar'));
-    let anexo = null; const vistas = new Set();
+    let anexo = null; const vistas = new Map();
     ficheiro.addEventListener('change', () => {
       const f = ficheiro.files[0]; ficheiro.value = ''; if (!f) return;
-      if (f.size > 10 * 1048576) { LL.aviso('O ficheiro tem mais de 10 MB.', 'erro'); return; }
-      if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) { LL.aviso('Envie imagens (JPG, PNG, WebP) ou PDF.', 'erro'); return; }
-      anexo = f; infoAnexo.replaceChildren(LL.icone('clipe', 14), ' ' + f.name + ' (' + LL.tamanho(f.size) + ') ', h('button', { class: 'btn btn-link btn-sm p-0', type: 'button', onclick: () => { anexo = null; infoAnexo.replaceChildren(); }, text: 'remover' }));
+      if (!TIPOS_ANEXO.test(f.type)) { LL.aviso('Envie imagens, vídeos (MP4, WebM, MOV) ou PDF.', 'erro'); return; }
+      const max = /^video\//.test(f.type) ? 50 : 10;
+      if (f.size > max * 1048576) { LL.aviso('O ficheiro tem mais de ' + max + ' MB.', 'erro'); return; }
+      anexo = f; unica.checked = false;
+      infoAnexo.replaceChildren(LL.icone('clipe', 14), f.name + ' (' + LL.tamanho(f.size) + ')',
+        /^(image|video)\//.test(f.type) ? h('span', { class: 'form-check mb-0' }, unica, h('label', { class: 'form-check-label', for: unica.id, text: 'Visualização única' })) : null,
+        h('button', { class: 'btn btn-link btn-sm p-0', type: 'button', onclick: () => { anexo = null; infoAnexo.replaceChildren(); }, text: 'remover' }));
     });
+
+    // Estado de leitura: ✓ enviada, ✓✓ vista
+    const recibo = m => m.autor !== eu ? null : h('span', { class: 'chat-recibo' + (m.lida ? ' vista' : ''), title: m.lida ? 'Vista' : 'Enviada', text: m.lida ? '✓✓ Vista' : '✓ Enviada' });
+
+    const blocoAnexo = m => {
+      if (!m.anexo_path) return null;
+      const tipo = m.anexo_tipo || '', minha = m.autor === eu;
+      if (m.unica) {
+        if (minha) return h('div', { class: 'chat-unica' }, h('span', { text: '◉ Visualização única · ' + (m.vista_em ? 'aberta' : 'por abrir') }));
+        if (m.vista_em) return h('div', { class: 'chat-unica' }, h('span', { text: '◉ Visualização única · já aberta' }));
+        return h('button', { class: 'chat-unica botao', type: 'button', onclick: async ev => {
+          const botao = ev.currentTarget; botao.disabled = true;
+          const { data, error } = await sb.rpc('abrir_unica', { mid: m.id });
+          if (error) { LL.aviso(LL.erro(error), 'erro'); botao.disabled = false; return; }
+          const url = await urlAnexo(data, 60);
+          if (!url) { LL.aviso('Não foi possível abrir.', 'erro'); return; }
+          LL.verEcraInteiro(url, tipo, m.anexo_nome);
+          m.vista_em = new Date().toISOString(); botao.replaceWith(blocoAnexo(m));
+        } }, h('span', { text: '◉ ' + (/^video\//.test(tipo) ? 'Vídeo' : 'Foto') + ' de visualização única — toque para abrir' }));
+      }
+      if (/^(image|video)\//.test(tipo)) {
+        const alvo = h('div', { class: 'chat-media' }, h('span', { class: 'small opacity-75', text: 'A carregar…' }));
+        urlAnexo(m.anexo_path).then(url => {
+          if (!url) { alvo.replaceChildren(h('span', { class: 'small', text: 'Anexo indisponível' })); return; }
+          alvo.replaceChildren(/^video\//.test(tipo) ? h('video', { src: url, controls: true, preload: 'metadata', playsinline: true })
+            : h('img', { src: url, alt: m.anexo_nome || 'Imagem', loading: 'lazy', onclick: () => LL.verEcraInteiro(url, tipo, m.anexo_nome) }));
+        });
+        return alvo;
+      }
+      return h('button', { class: 'chat-anexo', type: 'button', onclick: () => LL.abrirPrivado('anexos', m.anexo_path) }, LL.icone('clipe', 14), ' ', m.anexo_nome || 'Anexo');
+    };
+
     const bolha = m => {
-      if (vistas.has(m.id)) return null; vistas.add(m.id);
       if (m.tipo === 'sistema') return h('div', { class: 'chat-sistema' }, h('span', { text: m.texto }), h('time', { text: LL.data(m.criado) }));
       const minha = m.autor === eu;
-      const anexoEl = m.anexo_path ? h('button', { class: 'chat-anexo', type: 'button', onclick: () => LL.abrirPrivado('anexos', m.anexo_path) }, LL.icone('clipe', 14), ' ', m.anexo_nome || 'Anexo') : null;
-      return h('div', { class: 'chat-bolha ' + (minha ? 'minha' : 'outra') + (m.tipo === 'comprovativo' ? ' comprovativo' : '') },
+      return h('div', { class: 'chat-bolha ' + (minha ? 'minha' : 'outra') + (m.tipo === 'comprovativo' ? ' comprovativo' : ''), 'data-id': String(m.id) },
         m.tipo === 'comprovativo' ? h('div', { class: 'rotulo mb-1', text: 'Comprovativo de pagamento' }) : null,
-        m.texto ? h('div', { class: 'chat-texto', text: m.texto }) : null, anexoEl,
-        h('time', { text: LL.data(m.criado) }));
+        m.texto ? h('div', { class: 'chat-texto', text: m.texto }) : null, blocoAnexo(m),
+        h('div', { class: 'chat-meta' }, h('time', { text: LL.data(m.criado) }), recibo(m)));
     };
-    const acrescentar = m => { const b = bolha(m); if (b) { const v = lista.querySelector('.chat-vazio'); if (v) v.remove(); lista.append(b); lista.scrollTop = lista.scrollHeight; } };
+    const acrescentar = m => {
+      if (vistas.has(m.id)) return;
+      const v = lista.querySelector('.chat-vazio'); if (v) v.remove();
+      const b = bolha(m); vistas.set(m.id, { m, b }); lista.append(b); lista.scrollTop = lista.scrollHeight;
+      if (m.autor !== eu) mostrarEscrita(false);
+    };
+    const atualizar = m => {             // chega quando a mensagem é lida ou a visualização única é aberta
+      const x = vistas.get(m.id); if (!x) return;
+      Object.assign(x.m, m); const nova = bolha(x.m); x.b.replaceWith(nova); x.b = nova;
+    };
     const marcarLidas = () => sb.from('mensagens').update({ lida: true }).eq('cliente_id', clienteId).neq('autor', eu).eq('lida', false).then(() => {});
+
+    // "A escrever…" (Realtime Broadcast; não é guardado)
+    let tEscrita, ultimoEnvio = 0;
+    const mostrarEscrita = on => { clearTimeout(tEscrita); escrevendo.textContent = on ? (souAdmin ? 'O cliente está a escrever…' : 'A escrever uma resposta…') : ''; if (on) tEscrita = setTimeout(() => mostrarEscrita(false), 3500); };
+    const canalEscrita = sb.channel('escrita-' + clienteId, { config: { broadcast: { self: false } } })
+      .on('broadcast', { event: 'escrever' }, ({ payload }) => { if (payload && payload.autor !== eu) mostrarEscrita(true); })
+      .subscribe();
+    texto.addEventListener('input', () => { const agora = Date.now(); if (agora - ultimoEnvio > 2000) { ultimoEnvio = agora; canalEscrita.send({ type: 'broadcast', event: 'escrever', payload: { autor: eu } }); } });
+
     const form = h('form', { class: 'chat-form', onsubmit: async e => {
       e.preventDefault();
       const t = texto.value.trim(); if (!t && !anexo) return;
       enviar.disabled = true;
       try {
-        let path = null, nome = null, tipo = null;
+        let path = null, nome = null, tipo = null; const u = !!(anexo && unica.checked);
         if (anexo) {
-          path = clienteId + '/chat/' + Date.now() + '-' + LL.nomeSeguro(anexo.name);
+          path = clienteId + (u ? '/unica/' : '/chat/') + Date.now() + '-' + LL.nomeSeguro(anexo.name);
+          infoAnexo.prepend(h('span', { class: 'spinner-border spinner-border-sm', role: 'status', 'aria-label': 'A enviar' }));
           const up = await sb.storage.from('anexos').upload(path, anexo, { contentType: anexo.type });
           if (up.error) throw up.error;
           nome = anexo.name.slice(0, 120); tipo = anexo.type;
         }
-        const { data, error } = await sb.from('mensagens').insert({ cliente_id: clienteId, autor: eu, texto: t, anexo_path: path, anexo_nome: nome, anexo_tipo: tipo }).select().single();
+        const { data, error } = await sb.from('mensagens').insert({ cliente_id: clienteId, autor: eu, texto: t, anexo_path: path, anexo_nome: nome, anexo_tipo: tipo, unica: u }).select().single();
         if (error) throw error;
         acrescentar(data); texto.value = ''; anexo = null; infoAnexo.replaceChildren();
-      } catch (er) { LL.aviso(LL.erro(er), 'erro'); }
+      } catch (er) { LL.aviso(LL.erro(er), 'erro'); const sp = infoAnexo.querySelector('.spinner-border'); if (sp) sp.remove(); }
       enviar.disabled = false; texto.focus();
     } },
-      h('label', { class: 'btn btn-outline-secondary', title: 'Anexar ficheiro', 'aria-label': 'Anexar ficheiro' }, LL.icone('clipe'), ficheiro),
+      h('label', { class: 'btn btn-outline-secondary', title: 'Anexar imagem, vídeo ou PDF', 'aria-label': 'Anexar ficheiro' }, LL.icone('clipe'), ficheiro),
       texto, enviar);
     texto.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
-    const el = h('div', { class: 'chat' }, lista, infoAnexo, form);
-    lista.append(h('div', { class: 'text-center small text-body-secondary py-3', text: 'A carregar mensagens…' }));
+    const el = h('div', { class: 'chat' }, lista, escrevendo, infoAnexo, form);
+    lista.append(h('div', { class: 'chat-vazio text-center small text-body-secondary py-3', text: 'A carregar mensagens…' }));
     sb.from('mensagens').select('*').eq('cliente_id', clienteId).order('criado', { ascending: true }).limit(500).then(({ data, error }) => {
       lista.replaceChildren();
       if (error) { lista.append(h('div', { class: 'text-danger small p-3', text: LL.erro(error) })); return; }
@@ -232,8 +301,9 @@ window.LL = (function () {
     });
     const canal = sb.channel('chat-' + clienteId + '-' + Math.random().toString(36).slice(2))
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens', filter: 'cliente_id=eq.' + clienteId }, ev => { acrescentar(ev.new); if (ev.new.autor !== eu) marcarLidas(); })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'mensagens', filter: 'cliente_id=eq.' + clienteId }, ev => atualizar(ev.new))
       .subscribe();
-    return { el, parar: () => sb.removeChannel(canal), focar: () => texto.focus() };
+    return { el, parar: () => { sb.removeChannel(canal); sb.removeChannel(canalEscrita); }, focar: () => texto.focus() };
   };
 
   return LL;

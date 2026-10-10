@@ -201,3 +201,18 @@ button.kpi:hover{border-color:var(--acento)}
 .gi-adicionar{aspect-ratio:4/3;border:2px dashed var(--linha);border-radius:.6rem;display:grid;place-content:center;text-align:center;gap:.2rem;cursor:pointer;color:var(--suave);font-weight:600}
 .gi-adicionar:hover{border-color:var(--acento);color:var(--acento)}
 .btn-conta{position:relative}
+
+.chat-meta{display:flex;justify-content:flex-end;gap:.5rem;align-items:center;margin-top:.2rem}
+.chat-meta time{margin:0}
+.chat-bolha.outra .chat-meta{justify-content:flex-start}
+.chat-recibo{font-size:.7rem;opacity:.75;white-space:nowrap}
+.chat-recibo.vista{opacity:1;font-weight:600}
+.chat-escrevendo{min-height:1.2em;font-size:.8rem;font-style:italic;color:var(--acento)}
+.chat-media{margin-top:.35rem}
+.chat-media img,.chat-media video{display:block;max-width:100%;max-height:280px;border-radius:.6rem;cursor:zoom-in;background:#000}
+.chat-unica{display:inline-flex;align-items:center;margin-top:.35rem;padding:.4rem .7rem;border-radius:.6rem;background:rgba(0,0,0,.1);font-size:.85rem;font-weight:600;border:0;color:inherit}
+.chat-unica.botao{cursor:pointer;border:1px dashed currentColor}
+.ecra-inteiro{position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.94);display:grid;place-items:center;padding:16px;user-select:none}
+.ecra-media{max-width:100%;max-height:88vh;border-radius:.5rem}
+.ecra-fechar{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));right:12px;z-index:1}
+.parcelas-opcoes{display:flex;flex-wrap:wrap;gap:.5rem}

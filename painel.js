@@ -122,7 +122,7 @@
       h('div', { class: 'resultado-url' }, h('span', { class: 'mono' }, LL.destacar(c.email, termos)), c.telefone ? h('span', null, ' › ', LL.destacar(LL.tel(c.telefone), termos)) : null),
       h('h3', null, h('button', { class: 'resultado-titulo', type: 'button', onclick: () => abrirPedido(p.id) }, LL.destacar(p.codigo, termos), ' — ', LL.destacar(c.nome || 'Sem nome', termos))),
       h('p', { class: 'resultado-resumo' }, h('span', { class: 'text-body-secondary', text: LL.data(p.criado) + ' — ' }), LL.destacar(p.itens.map(i => i.qtd + '× ' + i.nome).join(', '), termos), ' · ', h('strong', { text: LL.kz(p.total) }), p.notas ? h('span', null, ' · ', LL.destacar(p.notas.slice(0, 140), termos)) : null),
-      h('div', { class: 'd-flex gap-2 align-items-center flex-wrap' }, LL.selo(p.estado), p.metodo_pagamento ? h('span', { class: 'small text-body-secondary', text: p.metodo_pagamento }) : null,
+      h('div', { class: 'd-flex gap-2 align-items-center flex-wrap' }, LL.selo(p.estado), p.metodo_pagamento ? h('span', { class: 'small text-body-secondary', text: p.metodo_pagamento + ((p.parcelas || 1) > 1 ? ' · ' + (p.parcelas_pagas || 0) + '/' + p.parcelas + ' prestações' : '') }) : null,
         h('button', { class: 'btn btn-sm btn-primary ms-auto', type: 'button', onclick: () => abrirPedido(p.id), text: { pendente: 'Validar', comprovativo: 'Ver comprovativo', pago: 'Entregar projeto' }[p.estado] || 'Abrir' })));
   }
 
@@ -145,6 +145,10 @@
       LL.aviso('Pedido ' + p.codigo + ': ' + LL.ESTADOS[estado].t); mPedido.fechar();
     };
     const botao = (t, cls, fn) => h('button', { class: 'btn ' + cls, type: 'button', onclick: fn, text: t });
+    const nP = p.parcelas || 1, pagas = p.parcelas_pagas || 0;
+    const confirmarPag = () => (nP > 1 && pagas + 1 < nP)
+      ? botao('Confirmar prestação ' + (pagas + 1) + '/' + nP, 'btn-primary', () => mudarEstado('validado', { parcelas_pagas: pagas + 1 }))
+      : botao(nP > 1 ? 'Confirmar última prestação' : 'Confirmar pagamento', 'btn-primary', () => mudarEstado('pago', { parcelas_pagas: nP }));
     const cancelar = LL.confirmarBotao(h('button', { class: 'btn btn-outline-danger', type: 'button', text: 'Cancelar pedido' }), 'Confirmar cancelamento', () => mudarEstado('cancelado'));
 
     // Entregas
@@ -180,8 +184,8 @@
           mudarEstado('validado', { total: v });
         }), cancelar)],
       validado: [h('p', { class: 'small mb-0', text: 'À espera do pagamento do cliente. Se recebeu o pagamento por outra via, pode confirmá-lo já.' }), nota,
-        h('div', { class: 'd-flex gap-2 flex-wrap' }, botao('Confirmar pagamento', 'btn-primary', () => mudarEstado('pago')), cancelar)],
-      comprovativo: [nota, h('div', { class: 'd-flex gap-2 flex-wrap' }, botao('Confirmar pagamento', 'btn-primary', () => mudarEstado('pago')),
+        h('div', { class: 'd-flex gap-2 flex-wrap' }, confirmarPag(), cancelar)],
+      comprovativo: [nota, h('div', { class: 'd-flex gap-2 flex-wrap' }, confirmarPag(),
         botao('Recusar comprovativo', 'btn-outline-secondary', () => { if (!nota.campo.value.trim()) { msg.className = 'small text-danger'; msg.textContent = 'Escreva na nota o motivo da recusa.'; nota.campo.focus(); return; } mudarEstado('validado'); }), cancelar)],
       pago: [h('div', null, h('label', { class: 'form-label', for: 'pd-ficheiros', text: 'Enviar ficheiros do projeto (até 50 MB cada)' }), ficheiros, h('div', { class: 'form-text', text: 'O cliente só consegue descarregar depois de libertar o projeto.' })), listaEnt, nota,
         h('div', { class: 'd-flex gap-2 flex-wrap' }, LL.confirmarBotao(h('button', { class: 'btn btn-primary', type: 'button', text: 'Libertar projeto ao cliente' }), 'Confirmar: libertar agora', () => {
@@ -206,7 +210,7 @@
           h('div', { class: 'rotulo mb-2', text: 'Serviços' }),
           p.itens.map(i => h('div', { class: 'd-flex justify-content-between gap-2 small' }, h('span', { text: i.qtd + ' × ' + i.nome }), h('span', { class: 'mono', text: i.preco == null ? 'consulta' : LL.kz(i.preco * i.qtd) }))),
           h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total' }), h('span', { text: LL.kz(p.total) })),
-          h('div', { class: 'small text-body-secondary mt-1', text: 'Pagamento: ' + (p.metodo_pagamento || 'a combinar') })))),
+          h('div', { class: 'small text-body-secondary mt-1', text: 'Pagamento: ' + (p.metodo_pagamento || 'a combinar') + (nP > 1 ? ' · ' + nP + ' prestações de ' + LL.kz(Math.ceil(p.total / nP)) + ' · pagas ' + pagas + '/' + nP : ' · de uma vez') })))),
       p.notas ? h('div', null, h('div', { class: 'rotulo mb-1', text: 'Pedido do cliente' }), h('div', { class: 'mensagem-pronta', text: p.notas })) : null,
       (comp.data || []).length ? h('div', { class: 'd-grid gap-2' }, h('div', { class: 'rotulo', text: 'Comprovativos recebidos' }), comp.data.map(m =>
         h('button', { class: 'btn btn-outline-primary text-start d-flex gap-2 align-items-center', type: 'button', onclick: () => LL.abrirPrivado('anexos', m.anexo_path) }, LL.icone('clipe'), h('span', { class: 'flex-grow-1 text-truncate', text: m.anexo_nome || 'Comprovativo' }), h('span', { class: 'small', text: LL.data(m.criado) })))) : null,
