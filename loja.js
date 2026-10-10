@@ -305,8 +305,8 @@
     // Parcelamento: só a partir de 1.000 Kz (o servidor confirma esta regra)
     let parcelas = 1;
     const blocoParcelas = r.total >= 1000
-      ? h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Pagar de uma vez ou parcelar?' }),
-          h('div', { class: 'parcelas-opcoes' }, [1, 2, 3, 4, 6].map(n => {
+      ? h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Pagar de uma vez ou parcelar (até 3 vezes)?' }),
+          h('div', { class: 'parcelas-opcoes' }, [1, 2, 3].map(n => {
             const id = 'pd-p-' + n, x = h('input', { class: 'btn-check', type: 'radio', name: 'pd-parc', id, autocomplete: 'off' });
             x.checked = n === 1; x.addEventListener('change', () => { parcelas = n; });
             return [x, h('label', { class: 'btn btn-outline-primary btn-sm', for: id, text: n === 1 ? 'De uma vez · ' + LL.kz(r.total) : n + '× de ' + LL.kz(Math.ceil(r.total / n)) })];
@@ -390,6 +390,8 @@
       LL.linhaTempo(p.estado),
       h('div', { class: 'small' }, p.itens.map(i => h('div', { class: 'd-flex justify-content-between gap-2' }, h('span', { text: i.qtd + ' × ' + i.nome }), h('span', { class: 'mono', text: i.preco == null ? 'sob consulta' : LL.kz(i.preco * i.qtd) }))),
         h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total a pagar' }), h('span', { text: LL.kz(p.total) + (p.tem_consulta && p.estado === 'pendente' ? ' + sob consulta' : '') }))),
+      Number(p.desconto) > 0 ? h('div', { class: 'small text-success fw-semibold', text: 'Desconto aplicado: ' + LL.kz(p.desconto) }) : null,
+      p.estado !== 'pendente' && p.parcelas === 1 && p.total >= 1000 ? h('div', { class: 'small text-body-secondary', text: 'Pagamento de uma só vez.' }) : null,
       p.parcelas > 1 ? h('div', { class: 'small' }, h('strong', { text: p.parcelas + ' prestações de ' + LL.kz(Math.ceil(p.total / p.parcelas)) }), ' · pagas ' + (p.parcelas_pagas || 0) + ' de ' + p.parcelas) : null,
       p.nota_admin ? h('div', { class: 'alert alert-info mb-0 small', text: p.nota_admin }) : null,
       podePagar ? h('div', { class: 'caixa-pagamento d-grid gap-2' },

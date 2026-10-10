@@ -144,7 +144,10 @@ create table if not exists public.pedidos (
   atualizado timestamptz not null default now()
 );
 create index if not exists pedidos_cliente on public.pedidos (cliente_id);
-alter table public.pedidos add column if not exists parcelas int not null default 1 check (parcelas between 1 and 6);
+alter table public.pedidos add column if not exists parcelas int not null default 1;
+alter table public.pedidos drop constraint if exists pedidos_parcelas_check;
+alter table public.pedidos add constraint pedidos_parcelas_check check (parcelas between 1 and 3);   -- máximo 3 prestações
+alter table public.pedidos add column if not exists desconto numeric(14,2) not null default 0 check (desconto >= 0);
 alter table public.pedidos add column if not exists parcelas_pagas int not null default 0 check (parcelas_pagas >= 0);
 alter table public.pedidos enable row level security;
 drop policy if exists "pedidos: ver os próprios ou admin" on public.pedidos;
@@ -180,9 +183,10 @@ begin
   new.itens := linhas;
   new.total := soma;
   new.tem_consulta := consulta;
-  -- Abaixo de 1.000 Kz não há parcelamento; acima, até 6 prestações.
-  new.parcelas := case when soma >= 1000 then greatest(1, least(6, coalesce(new.parcelas, 1))) else 1 end;
+  -- Abaixo de 1.000 Kz não há parcelamento; acima, até 3 prestações.
+  new.parcelas := case when soma >= 1000 then greatest(1, least(3, coalesce(new.parcelas, 1))) else 1 end;
   new.parcelas_pagas := 0;
+  new.desconto := 0;
   new.codigo := 'LL-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
   new.criado := now();
   new.atualizado := now();
@@ -195,7 +199,7 @@ create or replace function public.marcar_atualizado() returns trigger language p
 begin
   new.atualizado := now();
   if new.total < 1000 then new.parcelas := 1; end if;
-  new.parcelas := greatest(1, least(6, new.parcelas));
+  new.parcelas := greatest(1, least(3, new.parcelas));
   new.parcelas_pagas := greatest(0, least(new.parcelas, new.parcelas_pagas));
   return new;
 end $$;
@@ -264,6 +268,7 @@ begin
     else
       t := case new.estado
         when 'validado' then 'O pedido ' || new.codigo || ' foi validado. Valor a pagar: ' || v
+          || case when new.desconto > 0 then ' (já com desconto de ' || replace(to_char(new.desconto, 'FM999,999,999,990'), ',', '.') || ' Kz)' else '' end
           || case when new.parcelas > 1 then ' em ' || new.parcelas || ' prestações de ' || replace(to_char(ceil(new.total / new.parcelas), 'FM999,999,999,990'), ',', '.') || ' Kz' else '' end
           || case when new.metodo_pagamento <> '' then ' por ' || new.metodo_pagamento else '' end
           || '. Depois de pagar, envie o comprovativo na página do pedido.'
@@ -370,3 +375,6 @@ end $$;
 --
 -- insert into public.admins (user_id) select id from auth.users where email = 'franciscofelixlelo16@gmail.com' on conflict do nothing;
 -- =====================================================================
+
+-- Atualiza a API do Supabase com as colunas novas
+notify pgrst, 'reload schema';

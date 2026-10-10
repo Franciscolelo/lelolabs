@@ -137,7 +137,19 @@
       sb.from('entregas').select('*').eq('pedido_id', p.id).order('criado')]);
     const msg = h('div', { class: 'small', role: 'status' });
     const nota = LL.campo('pd-nota', 'Nota para o cliente (opcional)', '', { area: true, rows: '2', max: '1000', ph: 'Ex.: prazo de entrega, motivo, instruções…' });
-    const total = LL.campo('pd-total', 'Valor final a pagar (Kz)', p.total, { tipo: 'number', min: '0', step: '500', col: 'col-sm-6', ajuda: p.tem_consulta ? 'Este pedido tem serviços sob consulta: indique o valor final.' : null });
+    // Validação: valor, desconto e se aceita parcelamento (máx. 3 prestações; nunca abaixo de 1.000 Kz)
+    const total = LL.campo('pd-total', 'Valor dos serviços (Kz)', Number(p.total) + Number(p.desconto || 0), { tipo: 'number', min: '0', step: '500', col: 'col-sm-4', ajuda: p.tem_consulta ? 'Tem serviços sob consulta: indique o valor.' : null });
+    const desconto = LL.campo('pd-desc', 'Desconto (Kz)', p.desconto || 0, { tipo: 'number', min: '0', step: '500', col: 'col-sm-4' });
+    const parcSel = LL.campo('pd-parc', 'Parcelamento', String(p.parcelas || 1), { col: 'col-sm-4', opcoes: [['1', 'Não aceitar · pagar de uma vez'], ['2', 'Aceitar em 2 prestações'], ['3', 'Aceitar em 3 prestações']], ajuda: 'O cliente pediu: ' + ((p.parcelas || 1) > 1 ? p.parcelas + ' prestações' : 'de uma vez') });
+    const resumoFinal = h('div', { class: 'col-12 fw-semibold' });
+    const calcular = () => {
+      const bruto = Math.max(0, Number(total.campo.value) || 0), d = Math.min(bruto, Math.max(0, Number(desconto.campo.value) || 0)), fim = bruto - d;
+      let n = Number(parcSel.campo.value) || 1; if (fim < 1000) n = 1;
+      parcSel.campo.disabled = fim < 1000;
+      resumoFinal.textContent = 'Cliente paga: ' + LL.kz(fim) + (d ? ' (desconto ' + LL.kz(d) + ')' : '') + (n > 1 ? ' em ' + n + ' prestações de ' + LL.kz(Math.ceil(fim / n)) : ' de uma vez') + (fim < 1000 ? ' · abaixo de 1.000 Kz não há parcelamento' : '');
+      return { fim, d, n };
+    };
+    [total, desconto, parcSel].forEach(c => c.campo.addEventListener('input', calcular)); parcSel.campo.addEventListener('change', calcular); calcular();
     const mudarEstado = async (estado, extra = {}) => {
       msg.className = 'small'; msg.textContent = 'A guardar…';
       const { error } = await sb.from('pedidos').update(Object.assign({ estado, nota_admin: nota.campo.value.trim() }, extra)).eq('id', p.id);
@@ -178,10 +190,11 @@
 
     const emailCorpo = 'Olá ' + (c.nome || '').split(' ')[0] + ',\n\nO seu pedido ' + p.codigo + ' na ' + (loja.nome || 'LeloLabs') + ' foi atualizado: ' + (LL.ESTADOS[p.estado] || {}).t + '.\nEntre na sua conta para ver os detalhes: ' + location.origin + location.pathname.replace(/painel\.html$/, '') + '\n\nCumprimentos,\n' + (loja.dono || '');
     const acoes = {
-      pendente: [h('div', { class: 'row g-3' }, total), nota,
+      pendente: [h('div', { class: 'row g-3' }, total, desconto, parcSel, resumoFinal), nota,
         h('div', { class: 'd-flex gap-2 flex-wrap' }, botao('Validar pedido', 'btn-primary', () => {
-          const v = Number(total.campo.value); if (!(v >= 0)) { msg.className = 'small text-danger'; msg.textContent = 'Indique um valor válido.'; return; }
-          mudarEstado('validado', { total: v });
+          const { fim, d, n } = calcular();
+          if (!(Number(total.campo.value) >= 0)) { msg.className = 'small text-danger'; msg.textContent = 'Indique um valor válido.'; return; }
+          mudarEstado('validado', { total: fim, desconto: d, parcelas: n });
         }), cancelar)],
       validado: [h('p', { class: 'small mb-0', text: 'À espera do pagamento do cliente. Se recebeu o pagamento por outra via, pode confirmá-lo já.' }), nota,
         h('div', { class: 'd-flex gap-2 flex-wrap' }, confirmarPag(), cancelar)],
