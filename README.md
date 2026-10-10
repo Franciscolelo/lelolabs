@@ -1,51 +1,55 @@
-# LeloLabs — loja virtual
+# LeloLabs — loja virtual com contas, pedidos e chat
 
-Loja de serviços de software de Francisco Felix Lelo (Luanda, Angola).
-Site estático: HTML, CSS (Bootstrap 5.3) e JavaScript, sem servidor e sem base de dados paga.
+Site estático (GitHub Pages ou Vercel) ligado a uma base de dados **Supabase** (plano gratuito).
 
-## Estrutura
+## O que faz
 
-Todos os ficheiros ficam na raiz do repositório (sem pastas):
+**Clientes**
+- Criam conta com nome, email e telefone (confirmação por email).
+- Juntam serviços ao carrinho e fazem o pedido, escolhendo o método de pagamento.
+- Recebem a validação, pagam e **enviam o comprovativo no próprio site**.
+- Conversam consigo pelo **chat do site** (com anexos de imagem e PDF).
+- Descarregam os ficheiros do projeto quando o libertar.
 
-- `index.html`, `loja.js`, `estilo.css`, `bootstrap.min.css`: loja pública
-- `painel.html`, `painel.js`: painel de administração
-- `dados.json`: catálogo, trabalhos e contactos
-- `favicon.svg`: ícone do site
+**Administrador (`painel.html`)**
+- Pedidos com **pesquisa estilo Google** (código, cliente, email, telefone, serviço).
+- Validar pedido (e definir o valor final), confirmar ou recusar pagamento, enviar ficheiros e **libertar o projeto**.
+- Conversas com cada cliente, em tempo real.
+- Clientes, serviços e trabalhos (**até 6 imagens** cada), dados da loja e **métodos de pagamento definidos por si**.
 
-## Como funciona
+## Instalação (uma vez, ~10 minutos)
 
-- **Loja:** o cliente junta serviços ao carrinho, escreve nome e telefone, escolhe o canal (WhatsApp, SMS, chamada ou email) e recebe a mensagem já pronta. O site não guarda dados de clientes.
-- **Painel** (`/painel.html`): login com palavra-passe encriptada (PBKDF2), edição de serviços, trabalhos, contactos e disponibilidade, histórico de vendas, importação de pedidos (cole a mensagem com `Ref: #LL:…`) e exportação CSV.
-- **Atualizar a loja:** no painel, edite e carregue em **Exportar dados.json**. Substitua o `dados.json` do repositório e faça commit. O site atualiza sozinho.
-- **Vendas:** ficam guardadas só no navegador onde usa o painel. Exporte cópias de segurança em *Segurança*. **Nunca** envie essas cópias para o GitHub: contêm dados de clientes.
+1. **Criar o projeto**: entre em supabase.com, crie conta e carregue em *New project* (região mais próxima: *West EU* ou *Central EU*). Guarde a palavra-passe da base de dados.
+2. **Criar a base de dados**: no projeto, abra **SQL Editor → New query**, cole todo o conteúdo de `supabase.sql` e carregue em **Run**.
+3. **Ligar o site**: em **Project Settings → API**, copie o *Project URL* e a chave *anon public* para o ficheiro `config.js`.
+4. **Endereço do site**: em **Authentication → URL Configuration**, ponha em *Site URL* o endereço do site (ex.: `https://franciscolelo.github.io/lelolabs/`) e adicione-o também em *Redirect URLs*.
+5. **Publicar**: envie todos os ficheiros para o GitHub (Add file → Upload files → Commit). O GitHub Pages atualiza em 1–2 minutos.
+6. **Tornar-se administrador**: crie a sua conta na loja (botão Entrar → Criar conta) e confirme o email. Depois, no **SQL Editor**, corra:
 
-## Testar no computador
+   ```sql
+   insert into public.admins (user_id) select id from auth.users where email = 'franciscofelixlelo16@gmail.com' on conflict do nothing;
+   ```
+7. Abra `painel.html` no seu site e entre com essa conta. Em **Loja e pagamentos**, escreva os seus dados de pagamento (IBAN, Multicaixa Express, etc.) e ative os métodos que aceita.
 
-O `dados.json` é lido por AJAX, por isso o navegador precisa de um servidor local:
+## Ficheiros
 
-```
-cd lelolabs
-python -m http.server 8000
-```
-
-Abra `http://localhost:8000` (loja) e `http://localhost:8000/painel.html` (painel).
-
-## Publicar
-
-### GitHub Pages (grátis)
-1. Crie um repositório público em github.com (ex.: `lelolabs`).
-2. Carregue todos os ficheiros desta pasta (botão **Add file → Upload files**) e faça commit.
-3. Em **Settings → Pages**, escolha *Deploy from a branch*, branch `main`, pasta `/ (root)`.
-4. O site fica em `https://<seu-utilizador>.github.io/lelolabs/`.
-
-### Vercel (grátis)
-1. Entre em vercel.com com a conta do GitHub.
-2. **Add New → Project**, escolha o repositório e carregue em **Deploy** (não precisa de configuração).
-
-### Domínio próprio
-Compre o domínio (ex.: `lelolabs.com`) e, no GitHub Pages (**Settings → Pages → Custom domain**) ou na Vercel (**Settings → Domains**), escreva o domínio. Depois crie no registador os registos DNS que a plataforma indicar. O HTTPS é ativado automaticamente.
+| Ficheiro | Para que serve |
+|---|---|
+| `index.html`, `loja.js` | Loja pública e área do cliente |
+| `painel.html`, `painel.js` | Painel de administração |
+| `comum.js` | Funções partilhadas (pesquisa, chat, galerias) |
+| `estilo.css`, `bootstrap.min.css` | Aparência (Bootstrap 5.3 + estilos da marca) |
+| `config.js` | Endereço e chave pública do Supabase |
+| `supabase.sql` | Tabelas, regras de segurança, ficheiros e avisos automáticos |
 
 ## Segurança
-- O painel é só uma ferramenta: mesmo aberto por outra pessoa, não altera o site (só o commit no GitHub altera) e não mostra as suas vendas (estão no seu navegador).
-- Imagens carregadas no painel são reduzidas e perdem os metadados de localização.
-- Todos os textos são inseridos com `textContent` (sem risco de injeção de HTML) e só se aceitam ligações `https://`.
+- **Regras no servidor (RLS):** cada cliente só lê os seus pedidos, mensagens e ficheiros; só o administrador altera a loja e os pedidos.
+- **Preços recalculados no servidor:** o cliente não consegue alterar o valor de um pedido.
+- **Ficheiros privados:** comprovativos e entregas usam ligações temporárias de 2 minutos; as entregas só ficam acessíveis depois de libertar o projeto.
+- Palavras-passe geridas pelo Supabase Auth (nunca guardadas em texto).
+- Todo o texto é inserido com `textContent` (sem injeção de HTML) e só se aceitam ligações `https://`.
+
+## Limites do plano gratuito do Supabase
+- 500 MB de base de dados e 1 GB de ficheiros; ficheiros de entrega até 50 MB cada.
+- O projeto entra em pausa após 7 dias sem visitas (reativa-se no painel do Supabase).
+- Os emails de confirmação do Supabase têm um limite baixo por hora. Para muitos clientes, configure um SMTP próprio em **Authentication → Emails → SMTP Settings**.

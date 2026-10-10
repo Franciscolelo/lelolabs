@@ -1,398 +1,403 @@
-/* LeloLabs — loja pública. Os dados vêm de dados.json (pedido AJAX). */
+/* LeloLabs — loja pública e área do cliente */
+'use strict';
 (function () {
-  'use strict';
-  var IMG_OK = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
-  var VID_OK = /^data:video\/(mp4|webm);base64,[A-Za-z0-9+/=]+$/;
-  var ESTADOS = { novo: ['Novo', 'text-bg-warning'], confirmado: ['Confirmado', 'text-bg-info'], pago: ['Pago', 'text-bg-primary'], entregue: ['Entregue', 'text-bg-success'], cancelado: ['Cancelado', 'text-bg-secondary'] };
-  var TIPOS = { imagem: 'Imagem', video: 'Vídeo', projeto: 'Projeto' };
-  var estado = { loja: { nome: '', dono: '', slogan: '', sobre: '', stack: '', local: '', telAlt: '' }, canais: [], produtos: [], trabalhos: [] };
-  var carrinho = lerLocal('ll_carrinho', []);
-  var filtroCat = 'Todos', busca = '', filtroTrab = 'todos';
-  var alterado = false;
-  // ================= Utilitários =================
-  function h(tag, props) {
-    var el = document.createElement(tag);
-    if (props) Object.keys(props).forEach(function (k) {
-      var v = props[k];
-      if (v == null || v === false) return;
-      if (k === 'class') el.className = v;
-      else if (k === 'text') el.textContent = v;
-      else if (k === 'html') el.innerHTML = v; // só para SVG constantes
-      else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
-      else el.setAttribute(k, v === true ? '' : v);
-    });
-    for (var i = 2; i < arguments.length; i++) junta(el, arguments[i]);
-    return el;
-  }
-  function junta(el, f) {
-    if (f == null || f === false) return;
-    if (Array.isArray(f)) { f.forEach(function (x) { junta(el, x); }); return; }
-    el.append(f instanceof Node ? f : document.createTextNode(String(f)));
-  }
-  var SVG = {
-    carrinho: '<path d="M3 4h2l2.4 11.2a1 1 0 0 0 1 .8h8.9a1 1 0 0 0 1-.8L20 8H6.2"/><circle cx="9" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/>',
-    whatsapp: '<path d="M4 20l1.3-3.9A8 8 0 1 1 8 19z"/><path d="M9 9c.4 2.4 2.4 4.6 5 5"/>',
-    sms: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 10h8M8 13h5"/>',
-    chamada: '<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>',
-    email: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
-    cadeado: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
-    copiar: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>'
-  };
-  function icone(n, t) { return h('span', { class: 'ico', 'aria-hidden': 'true', html: '<svg viewBox="0 0 24 24" width="' + (t || 18) + '" height="' + (t || 18) + '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + SVG[n] + '</svg>' }); }
-  function logo() { return h('span', { 'aria-hidden': 'true', html: '<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="var(--acento)"/><path d="M16 14v36h18" stroke="var(--acento-tinta)" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M32 14v22h16" stroke="#F0B84A" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' }); }
+  const { h, sb } = LL;
+  const raiz = document.getElementById('raiz');
+  if (!LL.configurado) { raiz.replaceChildren(LL.avisoConfig()); return; }
 
-  function kz(n) { return n == null || n === '' || isNaN(n) ? 'Sob consulta' : String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' Kz'; }
-  function urlSegura(s) { try { var u = new URL(String(s).trim()); return u.protocol === 'https:' ? u.href : ''; } catch (e) { return ''; } }
-  function digitos(s) { return String(s || '').replace(/\D/g, ''); }
-  function intl(s) { var d = digitos(s); return d.length === 9 ? '244' + d : d; }
-  function iniciais(t) { return String(t || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(function (p) { return p[0]; }).join('').toUpperCase(); }
-  function novoId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
-  function codigoPedido() { return 'LL-' + Date.now().toString(36).slice(-4).toUpperCase() + Math.random().toString(36).slice(2, 4).toUpperCase(); }
-  function lerLocal(k, def) { try { var v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch (e) { return def; } }
-  function gravarLocal(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
-  function sessao(k, v) { try { if (v === undefined) return sessionStorage.getItem(k); if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch (e) { return null; } }
-  function canal(id) { return estado.canais.filter(function (c) { return c.id === id; })[0]; }
-  function produto(id) { return estado.produtos.filter(function (p) { return p.id === id; })[0]; }
-  function b64url(str) { return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
-  function deB64url(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return decodeURIComponent(escape(atob(s))); }
-  function dataCurta(ms) { var d = new Date(ms); return d.toLocaleDateString('pt-PT') + ' ' + d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' }); }
+  let loja = {}, produtos = [], trabalhos = [], sessao = null, perfil = null;
+  let carrinho = LL.lerLocal('ll_carrinho', []);
+  let filtroCat = 'Todos', busca = '', naoLidas = 0, canalAvisos = null, depoisDeEntrar = null, chatAtivo = null;
 
-  function copiar(texto, botao, alvo) {
-    var ok = function () { var t = botao.innerHTML; botao.textContent = 'Copiado'; setTimeout(function () { botao.innerHTML = t; }, 1500); };
-    try { navigator.clipboard.writeText(texto).then(ok, function () { selecionar(alvo); }); } catch (e) { selecionar(alvo); }
-  }
-  function selecionar(el) { if (!el) return; var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  const topo = h('header', { class: 'topo' });
+  const principal = h('main', { id: 'conteudo' });
+  const rodape = h('footer', { class: 'rodape' });
+  raiz.append(topo, principal, rodape);
 
-  // Bootstrap (com alternativa simples se o CDN falhar)
-  function mostrar(el, tipo) {
-    if (window.bootstrap && bootstrap[tipo]) { bootstrap[tipo].getOrCreateInstance(el).show(); return; }
-    el.classList.add('show'); el.style.display = 'block'; el.removeAttribute('aria-hidden');
-  }
-  function esconder(el, tipo) {
-    if (window.bootstrap && bootstrap[tipo]) { var i = bootstrap[tipo].getInstance(el); if (i) i.hide(); return; }
-    el.classList.remove('show'); el.style.display = 'none';
-  }
-  function aviso(texto) {
-    var t = h('div', { class: 'toast align-items-center', role: 'status', 'aria-live': 'polite' }, h('div', { class: 'd-flex' }, h('div', { class: 'toast-body', text: texto })));
-    zonaAvisos.append(t);
-    if (window.bootstrap) { var x = bootstrap.Toast.getOrCreateInstance(t, { delay: 2200 }); t.addEventListener('hidden.bs.toast', function () { t.remove(); }); x.show(); }
-    else setTimeout(function () { t.remove(); }, 2200);
-  }
-
-  // Tema do Bootstrap acompanha o tema do Claude
-  function sincronizarTema() {
-    var r = document.documentElement, t = r.getAttribute('data-theme');
-    if (t !== 'dark' && t !== 'light') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    r.setAttribute('data-bs-theme', t);
-  }
-  sincronizarTema();
-  new MutationObserver(sincronizarTema).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-  try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', sincronizarTema); } catch (e) {}
-
-  // ================= Estrutura =================
-  var raiz = document.getElementById('raiz');
-  var topo = h('header', { class: 'topo' });
-  var principal = h('main');
-  var rodape = h('footer', { class: 'rodape' });
-  var zonaAvisos = h('div', { class: 'toast-container position-fixed bottom-0 start-50 translate-middle-x p-3', style: 'z-index:1090' });
-  var camadaAdmin = h('div');
-
-  var corpoCarrinho = h('div', { class: 'offcanvas-body d-flex flex-column' });
-  var oc = h('div', { class: 'offcanvas offcanvas-end', tabindex: '-1', id: 'oc-carrinho', 'aria-labelledby': 'tit-carrinho' },
+  const corpoCarrinho = h('div', { class: 'offcanvas-body d-flex flex-column' });
+  const oc = h('div', { class: 'offcanvas offcanvas-end', tabindex: '-1', 'aria-labelledby': 'tit-carrinho' },
     h('div', { class: 'offcanvas-header border-bottom' }, h('h5', { class: 'offcanvas-title', id: 'tit-carrinho', text: 'O seu carrinho' }),
-      h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'offcanvas', 'aria-label': 'Fechar' })),
-    corpoCarrinho);
+      h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'offcanvas', 'aria-label': 'Fechar' })), corpoCarrinho);
+  document.body.append(oc);
+  const mAuth = LL.modal({ titulo: 'Entrar' });
+  const mPedido = LL.modal({ titulo: 'Finalizar pedido', tamanho: 'modal-lg' });
+  const mConta = LL.modal({ titulo: 'A minha conta', tamanho: 'modal-xl modal-fullscreen-md-down' });
+  const mDetalhe = LL.modal({ titulo: '', tamanho: 'modal-lg' });
+  mConta.el.addEventListener('hidden.bs.modal', () => { if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; } });
 
-  var corpoPedido = h('div', { class: 'modal-body' });
-  var modalPedido = h('div', { class: 'modal fade', tabindex: '-1', 'aria-labelledby': 'tit-pedido', 'aria-hidden': 'true' },
-    h('div', { class: 'modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg' }, h('div', { class: 'modal-content' },
-      h('div', { class: 'modal-header' }, h('h5', { class: 'modal-title', id: 'tit-pedido', text: 'Finalizar pedido' }),
-        h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'modal', 'aria-label': 'Fechar' })),
-      corpoPedido)));
+  // ================= Dados =================
+  async function carregar() {
+    principal.replaceChildren(h('div', { class: 'container py-5 text-center text-body-secondary', text: 'A carregar a loja…' }));
+    const [l, p, t] = await Promise.all([
+      sb.from('loja').select('dados').eq('id', 1).maybeSingle(),
+      sb.from('produtos').select('*').eq('ativo', true).order('ordem').order('criado'),
+      sb.from('trabalhos').select('*').order('ordem').order('criado', { ascending: false })
+    ]);
+    if (l.error || p.error || t.error) {
+      principal.replaceChildren(h('div', { class: 'container py-5 text-center' }, h('p', { class: 'fw-semibold', text: 'Não foi possível carregar a loja.' }), h('p', { class: 'text-body-secondary', text: LL.erro(l.error || p.error || t.error) })));
+      return;
+    }
+    loja = (l.data && l.data.dados) || {}; produtos = p.data; trabalhos = t.data;
+    document.title = loja.nome || 'LeloLabs';
+    carrinho = carrinho.filter(i => produtos.some(x => x.id === i.id));
+    renderTudo();
+  }
 
-  var corpoGeral = h('div', { class: 'modal-body' });
-  var tituloGeral = h('h5', { class: 'modal-title', id: 'tit-geral' });
-  var modalGeral = h('div', { class: 'modal fade', tabindex: '-1', 'aria-labelledby': 'tit-geral', 'aria-hidden': 'true' },
-    h('div', { class: 'modal-dialog modal-dialog-centered modal-lg' }, h('div', { class: 'modal-content' },
-      h('div', { class: 'modal-header' }, tituloGeral, h('button', { type: 'button', class: 'btn-close', 'data-bs-dismiss': 'modal', 'aria-label': 'Fechar' })),
-      corpoGeral)));
+  sb.auth.onAuthStateChange((evento, s) => {
+    sessao = s;
+    setTimeout(() => {                       // fora do callback, como recomenda o Supabase
+      if (evento === 'PASSWORD_RECOVERY') abrirNovaSenha();
+      if (s) carregarPerfil(); else { perfil = null; pararAvisos(); renderTopo(); }
+    }, 0);
+  });
+  async function carregarPerfil() {
+    const { data } = await sb.from('perfis').select('*').eq('id', sessao.user.id).maybeSingle();
+    perfil = data || { id: sessao.user.id, nome: '', email: sessao.user.email, telefone: '' };
+    renderTopo(); iniciarAvisos();
+    if (depoisDeEntrar) { const f = depoisDeEntrar; depoisDeEntrar = null; f(); }
+  }
+  async function contarNaoLidas() {
+    const { count } = await sb.from('mensagens').select('id', { count: 'exact', head: true }).eq('cliente_id', sessao.user.id).eq('autor', 'admin').eq('lida', false);
+    naoLidas = count || 0; renderTopo();
+  }
+  function iniciarAvisos() {
+    pararAvisos(); contarNaoLidas();
+    canalAvisos = sb.channel('avisos-' + sessao.user.id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'mensagens', filter: 'cliente_id=eq.' + sessao.user.id }, ev => {
+        if (ev.new.autor === 'admin' && !chatAtivo) { naoLidas++; renderTopo(); LL.aviso(ev.new.tipo === 'sistema' ? ev.new.texto : 'Nova mensagem de ' + (loja.dono || 'LeloLabs').split(' ')[0]); }
+      }).subscribe();
+  }
+  function pararAvisos() { if (canalAvisos) { sb.removeChannel(canalAvisos); canalAvisos = null; } naoLidas = 0; }
 
-  raiz.append(topo, principal, rodape, oc, modalPedido, modalGeral, camadaAdmin, zonaAvisos);
-
-  // ================= Página pública =================
-  function renderTudo() { renderTopo(); renderPrincipal(); renderRodape(); renderCarrinho(); }
-
-  function totalItens() { return carrinho.reduce(function (s, i) { return s + i.qtd; }, 0); }
+  // ================= Página =================
+  function renderTudo() { renderTopo(); principal.replaceChildren(secHeroi(), secLoja(), secTrabalhos(), secContacto()); renderRodape(); renderCarrinho(); }
+  const totalItens = () => carrinho.reduce((s, i) => s + i.qtd, 0);
 
   function renderTopo() {
-    var n = totalItens();
+    const n = totalItens();
     topo.replaceChildren(h('div', { class: 'container' },
-      h('a', { class: 'marca', href: '#inicio' }, logo(), estado.loja.nome),
+      h('a', { class: 'marca', href: '#inicio' }, LL.logo(), loja.nome || 'LeloLabs'),
       h('nav', { 'aria-label': 'Secções' }, h('a', { href: '#loja', text: 'Serviços' }), h('a', { href: '#trabalhos', text: 'Trabalhos' }), h('a', { href: '#contacto', text: 'Contacto' })),
-      h('div', { class: 'acoes-topo' },
-        h('button', { class: 'btn btn-primary btn-carrinho', type: 'button', 'aria-label': 'Abrir carrinho, ' + n + ' itens', onclick: function () { mostrar(oc, 'Offcanvas'); } },
-          icone('carrinho'), h('span', { class: 'd-none d-sm-inline ms-1', text: 'Carrinho' }), n ? h('span', { class: 'badge rounded-pill', text: n }) : null))));
-  }
-
-  function renderPrincipal() {
-    principal.replaceChildren(secHeroi(), secLoja(), secTrabalhos(), secContacto());
-  }
-
-  function linhaCanal(c) {
-    return h('div', { class: 'canal-linha' }, h('span', { class: 'ponto' + (c.ativo ? ' on' : '') }), icone(c.id),
-      h('div', { style: 'min-width:0' }, h('div', { class: 'nome', text: c.nome }), h('div', { class: 'hor', text: c.horario })),
-      h('span', { class: 'estado-canal' + (c.ativo ? ' on' : ''), text: c.ativo ? 'Disponível' : 'Indisponível' }));
+      h('div', { class: 'acoes-topo d-flex gap-2' },
+        h('button', { class: 'btn btn-outline-secondary btn-conta', type: 'button', onclick: () => sessao ? abrirConta('pedidos') : abrirAuth('entrar') },
+          LL.icone('pessoa'), h('span', { class: 'd-none d-md-inline ms-1', text: sessao ? ((perfil && perfil.nome.split(' ')[0]) || 'A minha conta') : 'Entrar' }),
+          naoLidas ? h('span', { class: 'badge rounded-pill text-bg-danger ms-1', text: naoLidas, 'aria-label': naoLidas + ' mensagens por ler' }) : null),
+        h('button', { class: 'btn btn-primary btn-carrinho', type: 'button', 'aria-label': 'Carrinho, ' + n + ' itens', onclick: () => bootstrap.Offcanvas.getOrCreateInstance(oc).show() },
+          LL.icone('carrinho'), h('span', { class: 'd-none d-sm-inline ms-1', text: 'Carrinho' }), n ? h('span', { class: 'badge rounded-pill', text: n }) : null))));
   }
 
   function secHeroi() {
     return h('section', { class: 'container heroi', id: 'inicio' }, h('div', { class: 'row g-4 align-items-end' },
       h('div', { class: 'col-lg-7' },
-        h('span', { class: 'rotulo', text: 'Programador · ' + estado.loja.local }),
-        h('h1', { text: estado.loja.slogan }),
-        h('p', { class: 'sobre', text: estado.loja.sobre }),
+        h('span', { class: 'rotulo', text: 'Programador · ' + (loja.local || '') }),
+        h('h1', { text: loja.slogan || '' }),
+        h('p', { class: 'sobre', text: loja.sobre || '' }),
         h('div', { class: 'd-flex flex-wrap gap-2 mt-4' },
           h('a', { class: 'btn btn-primary btn-lg', href: '#loja', text: 'Ver serviços e preços' }),
-          h('a', { class: 'btn btn-outline-secondary btn-lg', href: '#trabalhos', text: 'Ver trabalhos' })),
-        h('p', { class: 'mono small text-body-secondary mt-3 mb-0', text: estado.loja.stack })),
+          h('button', { class: 'btn btn-outline-secondary btn-lg', type: 'button', onclick: () => sessao ? abrirConta('conversa') : abrirAuth('registo', () => abrirConta('conversa')) }, LL.icone('chat'), ' Falar comigo')),
+        loja.stack ? h('p', { class: 'mono small text-body-secondary mt-3 mb-0', text: loja.stack }) : null),
       h('div', { class: 'col-lg-5' }, h('div', { class: 'disponibilidade' },
-        h('div', { class: 'd-flex justify-content-between align-items-center mb-1' }, h('span', { class: 'rotulo', text: 'Onde me pode contactar' })),
-        estado.canais.map(linhaCanal)))));
+        h('span', { class: 'rotulo', text: 'Como funciona' }),
+        [['1', 'Escolha os serviços', 'Junte ao carrinho o que precisa.'], ['2', 'Crie a sua conta', 'Nome, email e telefone. Leva 1 minuto.'], ['3', 'Pague e envie o comprovativo', 'Tudo dentro do site, com chat direto.'], ['4', 'Receba o projeto', 'Os ficheiros ficam na sua conta.']].map(([n, t, s]) =>
+          h('div', { class: 'canal-linha' }, h('span', { class: 'passo-n', text: n }), h('div', null, h('div', { class: 'nome', text: t }), h('div', { class: 'hor', text: s }))))))));
   }
 
   function secLoja() {
-    var ativos = estado.produtos.filter(function (p) { return p.ativo; });
-    var cats = ['Todos'].concat(ativos.map(function (p) { return p.categoria; }).filter(function (c, i, a) { return c && a.indexOf(c) === i; }));
-    var q = busca.trim().toLowerCase();
-    var lista = ativos.filter(function (p) {
-      return (filtroCat === 'Todos' || p.categoria === filtroCat) && (!q || (p.nome + ' ' + p.descricao + ' ' + p.categoria).toLowerCase().indexOf(q) >= 0);
-    });
-    var campoBusca = h('input', { class: 'form-control', type: 'search', id: 'busca', placeholder: 'Procurar serviço', 'aria-label': 'Procurar serviço' });
-    campoBusca.value = busca;
-    campoBusca.addEventListener('input', function () { busca = campoBusca.value; var pos = campoBusca.selectionStart; renderPrincipalLoja(); var c = document.getElementById('busca'); if (c) { c.focus(); try { c.setSelectionRange(pos, pos); } catch (e) {} } });
-    return h('section', { class: 'seccao', id: 'loja' }, h('div', { class: 'container' },
-      h('div', { class: 'd-flex flex-wrap align-items-end justify-content-between gap-3 mb-4' },
-        h('div', null, h('span', { class: 'rotulo', text: 'Loja · preços em kwanzas' }), h('h2', { text: 'Serviços' })),
-        h('div', { style: 'min-width:min(280px,100%)' }, campoBusca)),
-      h('ul', { class: 'nav nav-pills gap-2 mb-4', role: 'group', 'aria-label': 'Categorias' }, cats.map(function (c) {
-        return h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (filtroCat === c ? ' active' : ''), 'aria-pressed': String(filtroCat === c), onclick: function () { filtroCat = c; renderPrincipalLoja(); } }, c));
-      })),
-      lista.length ? h('div', { class: 'row g-4' }, lista.map(function (p) { return h('div', { class: 'col-sm-6 col-lg-4' }, cartaoProduto(p)); }))
-        : h('div', { class: 'vazio', text: 'Nenhum serviço encontrado. Experimente outra categoria ou pesquisa.' })));
+    const cats = ['Todos'].concat([...new Set(produtos.map(p => p.categoria).filter(Boolean))]);
+    const termos = LL.termos(busca), t0 = performance.now();
+    const lista = produtos.filter(p => (filtroCat === 'Todos' || p.categoria === filtroCat) && (!termos.length || LL.corresponde([p.nome, p.descricao, p.categoria, (p.itens || []).join(' ')].join(' '), termos)));
+    const sec = h('section', { class: 'seccao', id: 'loja' }, h('div', { class: 'container' },
+      h('div', { class: 'text-center mb-4' }, h('span', { class: 'rotulo', text: 'Loja · preços em kwanzas' }), h('h2', { text: 'Serviços' })),
+      h('div', { class: 'mx-auto mb-2', style: 'max-width:640px' }, LL.caixaPesquisa({ id: 'busca-loja', placeholder: 'Pesquisar serviços', valor: busca, grande: true, aoMudar: v => { busca = v; atualizarLoja(true); } })),
+      termos.length ? h('div', { class: 'text-center' }, LL.contagem(lista.length, performance.now() - t0)) : null,
+      h('ul', { class: 'nav nav-pills gap-2 my-4 justify-content-center', 'aria-label': 'Categorias' }, cats.map(c =>
+        h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (filtroCat === c ? ' active' : ''), 'aria-pressed': String(filtroCat === c), onclick: () => { filtroCat = c; atualizarLoja(); } }, c)))),
+      lista.length ? h('div', { class: 'row g-4' }, lista.map(p => h('div', { class: 'col-sm-6 col-lg-4' }, cartaoProduto(p, termos))))
+        : h('div', { class: 'vazio', text: produtos.length ? 'Nenhum serviço encontrado. Experimente outras palavras ou outra categoria.' : 'Os serviços serão publicados em breve.' })));
+    return sec;
   }
-  function renderPrincipalLoja() { var velho = document.getElementById('loja'); if (velho) velho.replaceWith(secLoja()); }
-
-  function capaProduto(p) {
-    var c = IMG_OK.test(p.img || '') ? h('div', { class: 'capa' }, h('img', { src: p.img, alt: p.nome, loading: 'lazy' })) : h('div', { class: 'capa capa-grelha', 'aria-hidden': 'true' }, h('span', { text: iniciais(p.nome) }));
-    if (p.destaque) c.append(h('span', { class: 'selo-destaque', text: 'Mais procurado' }));
-    return c;
+  function atualizarLoja(manterFoco) {
+    const velho = document.getElementById('loja'); if (!velho) return;
+    const pos = manterFoco ? document.getElementById('busca-loja').selectionStart : null;
+    velho.replaceWith(secLoja());
+    if (manterFoco) { const c = document.getElementById('busca-loja'); c.focus(); try { c.setSelectionRange(pos, pos); } catch (e) { /* ignorar */ } }
   }
 
-  function cartaoProduto(p) {
-    var noCarrinho = carrinho.filter(function (i) { return i.id === p.id; })[0];
-    return h('article', { class: 'card produto' + (p.destaque ? ' destaque' : '') }, capaProduto(p),
+  function cartaoProduto(p, termos = []) {
+    const no = carrinho.find(i => i.id === p.id);
+    return h('article', { class: 'card produto h-100' + (p.destaque ? ' destaque' : '') },
+      h('div', { class: 'position-relative' }, LL.galeria(p.imagens, p.nome), p.destaque ? h('span', { class: 'selo-destaque', text: 'Mais procurado' }) : null),
       h('div', { class: 'card-body d-flex flex-column gap-3' },
-        h('div', { class: 'd-flex align-items-center gap-2 flex-wrap' }, h('span', { class: 'etiqueta', text: p.categoria })),
-        h('div', null, h('h3', { class: 'h5 mb-1', text: p.nome }), h('p', { class: 'text-body-secondary mb-0', text: p.descricao })),
-        h('ul', { class: 'lista-itens' }, (p.itens || []).map(function (i) { return h('li', { text: i }); })),
+        h('div', null, h('span', { class: 'etiqueta', text: p.categoria })),
+        h('div', null, h('h3', { class: 'h5 mb-1' }, LL.destacar(p.nome, termos)), h('p', { class: 'text-body-secondary mb-0 recorte' }, LL.destacar(p.descricao, termos))),
+        (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.slice(0, 4).map(i => h('li', null, LL.destacar(i, termos)))) : null,
         h('div', { class: 'mt-auto d-flex align-items-end justify-content-between gap-2 flex-wrap' },
-          h('div', null, h('div', { class: 'preco', text: kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade })),
-          h('button', { class: 'btn ' + (noCarrinho ? 'btn-outline-primary' : 'btn-primary'), type: 'button', onclick: function () { adicionar(p.id); } },
-            noCarrinho ? 'Adicionar mais (' + noCarrinho.qtd + ')' : 'Adicionar ao carrinho'))));
+          h('div', null, h('div', { class: 'preco', text: LL.kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade })),
+          h('div', { class: 'd-flex gap-2' },
+            h('button', { class: 'btn btn-outline-secondary', type: 'button', onclick: () => abrirDetalhe(p), text: 'Detalhes' }),
+            h('button', { class: 'btn ' + (no ? 'btn-outline-primary' : 'btn-primary'), type: 'button', onclick: () => adicionar(p.id) }, no ? 'Mais 1 (' + no.qtd + ')' : 'Adicionar')))));
+  }
+
+  function abrirDetalhe(p) {
+    mDetalhe.titulo(p.nome);
+    mDetalhe.corpo.replaceChildren(h('div', { class: 'd-grid gap-3' },
+      LL.galeria(p.imagens, p.nome, 'capa-grande'),
+      h('div', { class: 'd-flex justify-content-between align-items-end flex-wrap gap-2' },
+        h('div', null, h('span', { class: 'etiqueta', text: p.categoria }), h('div', { class: 'preco mt-2', text: LL.kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade })),
+        h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: () => { adicionar(p.id); mDetalhe.fechar(); } }, LL.icone('carrinho'), ' Adicionar ao carrinho')),
+      p.descricao ? h('p', { class: 'mb-0', text: p.descricao }) : null,
+      (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.map(i => h('li', { text: i }))) : null));
+    mDetalhe.abrir();
   }
 
   function secTrabalhos() {
-    var conta = function (t) { return estado.trabalhos.filter(function (x) { return t === 'todos' || x.tipo === t; }).length; };
-    var lista = estado.trabalhos.filter(function (t) { return filtroTrab === 'todos' || t.tipo === filtroTrab; });
     return h('section', { class: 'seccao', id: 'trabalhos' }, h('div', { class: 'container' },
-      h('div', { class: 'd-flex flex-wrap align-items-end justify-content-between gap-3 mb-4' },
-        h('div', null, h('span', { class: 'rotulo', text: 'Portfólio' }), h('h2', { text: 'Trabalhos realizados' })),
-        h('ul', { class: 'nav nav-pills gap-2', role: 'group', 'aria-label': 'Filtrar trabalhos' },
-          [['todos', 'Todos'], ['imagem', 'Imagens'], ['video', 'Vídeos'], ['projeto', 'Projetos']].filter(function (f) { return f[0] === 'todos' || conta(f[0]); }).map(function (f) {
-            return h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (filtroTrab === f[0] ? ' active' : ''), 'aria-pressed': String(filtroTrab === f[0]), onclick: function () { filtroTrab = f[0]; var s = document.getElementById('trabalhos'); s.replaceWith(secTrabalhos()); } }, f[1] + ' ', h('span', { class: 'mono small opacity-75', text: conta(f[0]) })));
-          }))),
-      lista.length ? h('div', { class: 'row g-4' }, lista.map(function (t) { return h('div', { class: 'col-sm-6 col-lg-4' }, cartaoTrabalho(t)); }))
-        : h('div', { class: 'vazio', text: 'Ainda não há trabalhos nesta categoria.' })));
-  }
-
-  function cartaoTrabalho(t) {
-    var capa, link = urlSegura(t.link), img = IMG_OK.test(t.img || ''), vid = VID_OK.test(t.video || '');
-    if (vid) capa = h('div', { class: 'capa' }, h('video', { src: t.video, controls: true, preload: 'metadata', playsinline: true, poster: img ? t.img : null }));
-    else if (img && t.tipo === 'video' && link) capa = h('a', { class: 'capa', href: link, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Ver vídeo: ' + t.titulo }, h('img', { src: t.img, alt: '' }), h('span', { class: 'selo-destaque', text: '▶ Ver vídeo' }));
-    else if (img) capa = h('button', { class: 'capa', type: 'button', 'aria-label': 'Ampliar ' + t.titulo, onclick: function () { abrirGeral(t.titulo, h('img', { src: t.img, alt: t.titulo, class: 'w-100 rounded' })); } }, h('img', { src: t.img, alt: t.titulo, loading: 'lazy' }));
-    else capa = h('div', { class: 'capa capa-grelha', 'aria-hidden': 'true' }, h('span', { text: iniciais(t.titulo) }));
-    return h('article', { class: 'card h-100 overflow-hidden' }, capa, h('div', { class: 'card-body d-flex flex-column gap-2' },
-      h('div', { class: 'd-flex gap-2 align-items-center flex-wrap' }, h('span', { class: 'etiqueta', text: TIPOS[t.tipo] || 'Projeto' }), t.categoria ? h('span', { class: 'rotulo', text: t.categoria }) : null),
-      h('h3', { class: 'h5 mb-0', text: t.titulo }), t.descricao ? h('p', { class: 'text-body-secondary mb-0', text: t.descricao }) : null,
-      link ? h('a', { class: 'mt-auto fw-semibold text-decoration-none', href: link, target: '_blank', rel: 'noopener noreferrer', text: t.tipo === 'video' ? 'Ver vídeo ↗' : 'Abrir ligação ↗' }) : null));
-  }
-
-  function cartaoContacto(rotulo, valor, ic, ativo, horario) {
-    var v = h('div', { class: 'valor', text: valor });
-    var b = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button' }, icone('copiar', 16), ' Copiar');
-    b.addEventListener('click', function () { copiar(valor, b, v); });
-    return h('div', { class: 'col-sm-6 col-lg-3' }, h('div', { class: 'card h-100 contacto-card' }, h('div', { class: 'card-body d-flex flex-column gap-2' },
-      h('div', { class: 'd-flex align-items-center gap-2' }, icone(ic), h('span', { class: 'rotulo', text: rotulo }),
-        ativo == null ? null : h('span', { class: 'badge ms-auto ' + (ativo ? 'text-bg-success' : 'text-bg-secondary'), text: ativo ? 'Disponível' : 'Indisponível' })),
-      v, horario ? h('div', { class: 'small text-body-secondary', text: horario }) : null, h('div', { class: 'mt-auto' }, b))));
+      h('span', { class: 'rotulo', text: 'Portfólio' }), h('h2', { class: 'mb-4', text: 'Trabalhos realizados' }),
+      trabalhos.length ? h('div', { class: 'row g-4' }, trabalhos.map(t => h('div', { class: 'col-sm-6 col-lg-4' },
+        h('article', { class: 'card h-100 overflow-hidden' }, LL.galeria(t.imagens, t.titulo),
+          h('div', { class: 'card-body d-flex flex-column gap-2' },
+            t.categoria ? h('span', { class: 'rotulo', text: t.categoria }) : null,
+            h('h3', { class: 'h5 mb-0', text: t.titulo }),
+            t.descricao ? h('p', { class: 'text-body-secondary mb-0', text: t.descricao }) : null,
+            h('div', { class: 'mt-auto d-flex gap-3 flex-wrap' },
+              LL.url(t.video_url) ? h('a', { class: 'fw-semibold text-decoration-none', href: LL.url(t.video_url), target: '_blank', rel: 'noopener noreferrer', text: '▶ Ver vídeo' }) : null,
+              LL.url(t.link) ? h('a', { class: 'fw-semibold text-decoration-none', href: LL.url(t.link), target: '_blank', rel: 'noopener noreferrer', text: 'Abrir projeto ↗' }) : null))))))
+        : h('div', { class: 'vazio', text: 'Os trabalhos serão publicados em breve.' })));
   }
 
   function secContacto() {
-    var cards = estado.canais.map(function (c) { return cartaoContacto(c.nome, c.id === 'email' ? c.valor : formatarTel(c.valor), c.id, c.ativo, c.horario); });
     return h('section', { class: 'seccao', id: 'contacto' }, h('div', { class: 'container' },
-      h('span', { class: 'rotulo', text: 'Fale comigo' }), h('h2', { class: 'mb-4', text: 'Contactos' }),
-      h('div', { class: 'row g-3' }, cards),
-      estado.loja.telAlt ? h('p', { class: 'mt-3 text-body-secondary' }, 'Telefone alternativo: ', h('span', { class: 'mono', text: estado.loja.telAlt })) : null,
-      h('div', { class: 'privacidade mt-4' }, h('strong', { text: 'Os seus dados ficam consigo. ' }),
-        'Este site não guarda o seu nome nem o seu telefone. Ao fazer um pedido, a mensagem é preparada no seu aparelho e só é enviada quando a enviar pelo canal que escolher.')));
+      h('span', { class: 'rotulo', text: 'Fale comigo' }), h('h2', { class: 'mb-4', text: 'Contacto' }),
+      h('div', { class: 'row g-3' },
+        h('div', { class: 'col-md-6 col-lg-4' }, h('div', { class: 'card h-100' }, h('div', { class: 'card-body d-grid gap-2' },
+          h('div', { class: 'd-flex align-items-center gap-2' }, LL.icone('chat'), h('strong', { text: 'Chat no site' }), h('span', { class: 'badge text-bg-success ms-auto', text: 'Recomendado' })),
+          h('p', { class: 'small text-body-secondary mb-0', text: 'Converse comigo, envie comprovativos e receba os seus projetos, tudo num só lugar.' }),
+          h('button', { class: 'btn btn-primary mt-auto', type: 'button', onclick: () => sessao ? abrirConta('conversa') : abrirAuth('registo', () => abrirConta('conversa')), text: 'Abrir conversa' })))),
+        loja.email ? cartaoInfo('email', 'Email', loja.email) : null,
+        loja.telefone ? cartaoInfo('telefone', 'Telefone', LL.tel(loja.telefone), loja.horario) : null),
+      h('div', { class: 'privacidade mt-4' }, h('strong', { text: 'Os seus dados estão protegidos. ' }),
+        'Cada cliente só vê os seus próprios pedidos, mensagens e ficheiros. Os comprovativos e os projetos ficam guardados em área privada, e as palavras-passe nunca são guardadas em texto.')));
   }
-  function formatarTel(v) { var d = digitos(v); return d.length === 9 ? d.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3') : v; }
-
+  function cartaoInfo(ic, rot, valor, extra) {
+    const v = h('div', { class: 'valor mono', text: valor });
+    return h('div', { class: 'col-md-6 col-lg-4' }, h('div', { class: 'card h-100' }, h('div', { class: 'card-body d-grid gap-2' },
+      h('div', { class: 'd-flex align-items-center gap-2' }, LL.icone(ic), h('span', { class: 'rotulo', text: rot })), v,
+      extra ? h('div', { class: 'small text-body-secondary', text: extra }) : null)));
+  }
   function renderRodape() {
     rodape.replaceChildren(h('div', { class: 'container d-flex flex-wrap justify-content-between gap-2' },
-      h('span', { text: '© ' + new Date().getFullYear() + ' ' + estado.loja.nome + ' · ' + estado.loja.dono }),
-      h('span', { text: estado.loja.local })));
+      h('span', { text: '© ' + new Date().getFullYear() + ' ' + (loja.nome || '') + ' · ' + (loja.dono || '') }), h('span', { text: loja.local || '' })));
   }
-
-  function abrirGeral(titulo, conteudo) { tituloGeral.textContent = titulo; corpoGeral.replaceChildren(conteudo); mostrar(modalGeral, 'Modal'); }
 
   // ================= Carrinho =================
-  function guardarCarrinho() {
-    carrinho = carrinho.filter(function (i) { return produto(i.id) && produto(i.id).ativo && i.qtd > 0; });
-    gravarLocal('ll_carrinho', carrinho); renderTopo(); renderCarrinho(); renderPrincipalLoja();
-  }
+  function guardarCarrinho() { LL.gravarLocal('ll_carrinho', carrinho); renderTopo(); renderCarrinho(); atualizarLoja(); }
   function adicionar(id) {
-    var i = carrinho.filter(function (x) { return x.id === id; })[0];
-    if (i) i.qtd = Math.min(99, i.qtd + 1); else carrinho.push({ id: id, qtd: 1 });
-    guardarCarrinho(); aviso(produto(id).nome + ' adicionado ao carrinho');
+    const i = carrinho.find(x => x.id === id);
+    if (i) i.qtd = Math.min(99, i.qtd + 1); else carrinho.push({ id, qtd: 1 });
+    guardarCarrinho(); LL.aviso((produtos.find(p => p.id === id) || {}).nome + ' adicionado ao carrinho');
   }
-  function resumoCarrinho() {
-    var linhas = carrinho.map(function (i) { var p = produto(i.id); return { id: p.id, nome: p.nome, preco: p.preco, qtd: i.qtd, unidade: p.unidade }; });
-    var total = linhas.reduce(function (s, l) { return s + (l.preco == null ? 0 : l.preco * l.qtd); }, 0);
-    return { linhas: linhas, total: total, consulta: linhas.some(function (l) { return l.preco == null; }) };
+  function resumo() {
+    const linhas = carrinho.map(i => { const p = produtos.find(x => x.id === i.id); return p && { id: p.id, nome: p.nome, preco: p.preco, unidade: p.unidade, qtd: i.qtd }; }).filter(Boolean);
+    return { linhas, total: linhas.reduce((s, l) => s + (l.preco == null ? 0 : l.preco * l.qtd), 0), consulta: linhas.some(l => l.preco == null) };
   }
   function renderCarrinho() {
-    carrinho = carrinho.filter(function (i) { return produto(i.id) && produto(i.id).ativo; });
     if (!carrinho.length) {
-      corpoCarrinho.replaceChildren(h('div', { class: 'vazio my-auto' }, h('p', { class: 'mb-3', text: 'O carrinho está vazio.' }),
-        h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'offcanvas', text: 'Ver serviços' })));
+      corpoCarrinho.replaceChildren(h('div', { class: 'vazio my-auto' }, h('p', { class: 'mb-3', text: 'O carrinho está vazio.' }), h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'offcanvas', text: 'Ver serviços' })));
       return;
     }
-    var r = resumoCarrinho();
+    const r = resumo();
     corpoCarrinho.replaceChildren(
-      h('div', { class: 'flex-grow-1' }, r.linhas.map(function (l) {
-        var mudar = function (d) { var i = carrinho.filter(function (x) { return x.id === l.id; })[0]; i.qtd = Math.max(0, Math.min(99, i.qtd + d)); guardarCarrinho(); };
+      h('div', { class: 'flex-grow-1' }, r.linhas.map(l => {
+        const mudar = d => { const i = carrinho.find(x => x.id === l.id); i.qtd = Math.max(0, Math.min(99, i.qtd + d)); carrinho = carrinho.filter(x => x.qtd > 0); guardarCarrinho(); };
         return h('div', { class: 'item-carrinho' },
-          h('div', { style: 'min-width:0' }, h('div', { class: 'fw-semibold', text: l.nome }), h('div', { class: 'small text-body-secondary', text: kz(l.preco) + (l.preco != null ? ' · ' + l.unidade : '') })),
-          h('div', { class: 'fw-semibold text-end mono', text: l.preco == null ? '—' : kz(l.preco * l.qtd) }),
-          h('div', { class: 'qtd' }, h('button', { type: 'button', 'aria-label': 'Menos um', onclick: function () { mudar(-1); } }, '−'), h('span', { text: l.qtd }), h('button', { type: 'button', 'aria-label': 'Mais um', onclick: function () { mudar(1); } }, '+')),
-          h('button', { class: 'btn btn-sm btn-link text-body-secondary text-end', type: 'button', onclick: function () { mudar(-99); } }, 'Remover'));
+          h('div', { style: 'min-width:0' }, h('div', { class: 'fw-semibold', text: l.nome }), h('div', { class: 'small text-body-secondary', text: LL.kz(l.preco) + (l.preco != null && l.unidade ? ' · ' + l.unidade : '') })),
+          h('div', { class: 'fw-semibold text-end mono', text: l.preco == null ? '—' : LL.kz(l.preco * l.qtd) }),
+          h('div', { class: 'qtd' }, h('button', { type: 'button', 'aria-label': 'Menos um', onclick: () => mudar(-1) }, '−'), h('span', { text: l.qtd }), h('button', { type: 'button', 'aria-label': 'Mais um', onclick: () => mudar(1) }, '+')),
+          h('button', { class: 'btn btn-sm btn-link text-body-secondary text-end', type: 'button', onclick: () => mudar(-99), text: 'Remover' }));
       })),
       h('div', { class: 'pt-3 d-grid gap-2' },
-        h('div', { class: 'total-linha' }, h('span', { text: 'Total' }), h('span', { class: 'preco', text: kz(r.total) })),
-        r.consulta ? h('div', { class: 'small text-body-secondary', text: 'Inclui serviços com preço sob consulta, a combinar.' }) : null,
-        h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: function () { esconder(oc, 'Offcanvas'); abrirPedido(); } }, 'Finalizar pedido')));
+        h('div', { class: 'total-linha' }, h('span', { text: 'Total' }), h('span', { class: 'preco', text: LL.kz(r.total) })),
+        r.consulta ? h('div', { class: 'small text-body-secondary', text: 'Inclui serviços com preço sob consulta; o valor final é indicado na validação.' }) : null,
+        h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: () => { bootstrap.Offcanvas.getOrCreateInstance(oc).hide(); sessao ? abrirPedido() : abrirAuth('registo', abrirPedido); } }, 'Finalizar pedido')));
   }
 
-  // ================= Pedido e mensagens =================
-  var pedido = { nome: '', tel: '', notas: '', canal: '' };
-
-  function abrirPedido() {
-    var disponiveis = estado.canais.filter(function (c) { return c.ativo; });
-    if (!pedido.canal || !canal(pedido.canal) || !canal(pedido.canal).ativo) pedido.canal = disponiveis[0] ? disponiveis[0].id : '';
-    var erro = h('div', { class: 'text-danger small', role: 'alert' });
-    var nome = h('input', { class: 'form-control', id: 'pd-nome', autocomplete: 'name', maxlength: '80', required: true });
-    var tel = h('input', { class: 'form-control', id: 'pd-tel', type: 'tel', autocomplete: 'tel', maxlength: '20', required: true, placeholder: '9XX XXX XXX' });
-    var notas = h('textarea', { class: 'form-control', id: 'pd-notas', rows: '3', maxlength: '500', placeholder: 'Ex.: preciso do site até ao fim do mês.' });
-    nome.value = pedido.nome; tel.value = pedido.tel; notas.value = pedido.notas;
-    var opcoes = estado.canais.map(function (c) {
-      var r = h('input', { type: 'radio', name: 'pd-canal', value: c.id, id: 'pd-c-' + c.id, disabled: !c.ativo });
-      r.checked = pedido.canal === c.id;
-      r.addEventListener('change', function () { pedido.canal = c.id; });
-      return h('div', { class: 'col-sm-6' }, h('label', { class: 'opcao-canal' + (c.ativo ? '' : ' off'), for: 'pd-c-' + c.id }, r, icone(c.id, 20),
-        h('span', { style: 'min-width:0' }, h('span', { class: 'd-block fw-semibold', text: c.nome }), h('span', { class: 'd-block small text-body-secondary', text: c.ativo ? c.horario : 'Indisponível de momento' }))));
-    });
-    var r = resumoCarrinho();
-    var form = h('form', { class: 'd-grid gap-3', novalidate: true, onsubmit: function (e) {
-      e.preventDefault();
-      pedido.nome = nome.value.trim(); pedido.tel = tel.value.trim(); pedido.notas = notas.value.trim();
-      if (pedido.nome.length < 2) { erro.textContent = 'Escreva o seu nome.'; nome.focus(); return; }
-      if (digitos(pedido.tel).length < 9) { erro.textContent = 'Escreva um número de telefone válido, com 9 algarismos.'; tel.focus(); return; }
-      if (!pedido.canal) { erro.textContent = 'Escolha por onde quer ser contactado.'; return; }
-      mostrarMensagem();
+  // ================= Contas =================
+  function abrirAuth(modo, depois) {
+    if (depois) depoisDeEntrar = () => { mAuth.fechar(); depois(); };
+    const erro = h('div', { class: 'small text-danger', role: 'alert' });
+    const ok = h('div', { class: 'small text-success', role: 'status' });
+    const nav = [['entrar', 'Entrar'], ['registo', 'Criar conta']].map(([m, t]) => h('li', { class: 'nav-item flex-fill' }, h('button', { type: 'button', class: 'nav-link w-100' + (modo === m ? ' active' : ''), onclick: () => abrirAuth(m) }, t)));
+    const nome = LL.campo('au-nome', 'Nome completo', '', { max: '80', auto: 'name', req: true });
+    const email = LL.campo('au-email', 'Email', '', { tipo: 'email', max: '120', auto: 'email', req: true });
+    const tel = LL.campo('au-tel', 'Telefone', '', { tipo: 'tel', max: '20', auto: 'tel', ph: '9XX XXX XXX', req: true });
+    const senha = LL.campo('au-senha', 'Palavra-passe', '', { tipo: 'password', max: '72', auto: modo === 'registo' ? 'new-password' : 'current-password', req: true, ajuda: modo === 'registo' ? 'Pelo menos 8 caracteres.' : null });
+    const botao = h('button', { class: 'btn btn-primary btn-lg', type: 'submit', text: modo === 'registo' ? 'Criar conta' : modo === 'recuperar' ? 'Enviar ligação' : 'Entrar' });
+    const form = h('form', { class: 'row g-3', novalidate: true, onsubmit: async e => {
+      e.preventDefault(); erro.textContent = ''; ok.textContent = '';
+      const em = email.campo.value.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { erro.textContent = 'Escreva um email válido.'; return; }
+      botao.disabled = true;
+      try {
+        if (modo === 'recuperar') {
+          const { error } = await sb.auth.resetPasswordForEmail(em, { redirectTo: location.origin + location.pathname });
+          if (error) throw error; ok.textContent = 'Se existir uma conta com este email, enviámos uma ligação para criar uma nova palavra-passe.';
+        } else if (modo === 'registo') {
+          if (nome.campo.value.trim().length < 3) throw new Error('Escreva o seu nome completo.');
+          if (LL.digitos(tel.campo.value).length < 9) throw new Error('Escreva um telefone com 9 algarismos.');
+          if (senha.campo.value.length < 8) throw new Error('A palavra-passe tem de ter pelo menos 8 caracteres.');
+          const { data, error } = await sb.auth.signUp({ email: em, password: senha.campo.value, options: { data: { nome: nome.campo.value.trim(), telefone: LL.digitos(tel.campo.value) }, emailRedirectTo: location.origin + location.pathname } });
+          if (error) throw error;
+          if (!data.session) { form.replaceChildren(h('div', { class: 'col-12 text-center d-grid gap-2 py-3' }, LL.icone('email', 40), h('h3', { class: 'h5', text: 'Confirme o seu email' }), h('p', { class: 'mb-0', text: 'Enviámos uma mensagem para ' + em + '. Abra a ligação para ativar a conta e depois entre.' }))); return; }
+          mAuth.fechar(); LL.aviso('Conta criada. Bem-vindo!');
+        } else {
+          const { error } = await sb.auth.signInWithPassword({ email: em, password: senha.campo.value });
+          if (error) throw error;
+          mAuth.fechar(); LL.aviso('Sessão iniciada');
+        }
+      } catch (er) { erro.textContent = LL.erro(er); }
+      botao.disabled = false;
     } },
-      h('div', { class: 'p-3 rounded-3', style: 'background:var(--superficie-2)' },
-        r.linhas.map(function (l) { return h('div', { class: 'd-flex justify-content-between gap-2 small' }, h('span', { text: l.qtd + ' × ' + l.nome }), h('span', { class: 'mono', text: l.preco == null ? 'sob consulta' : kz(l.preco * l.qtd) })); }),
-        h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total' }), h('span', { text: kz(r.total) + (r.consulta ? ' + sob consulta' : '') }))),
-      h('div', { class: 'row g-3' },
-        h('div', { class: 'col-sm-6' }, h('label', { class: 'form-label', for: 'pd-nome', text: 'Nome' }), nome),
-        h('div', { class: 'col-sm-6' }, h('label', { class: 'form-label', for: 'pd-tel', text: 'Telefone' }), tel)),
-      h('div', null, h('label', { class: 'form-label', for: 'pd-notas', text: 'Observações (opcional)' }), notas),
-      h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Por onde quer enviar o pedido?' }), h('div', { class: 'row g-2' }, opcoes)),
-      erro,
-      h('div', { class: 'd-flex justify-content-end gap-2' },
-        h('button', { class: 'btn btn-outline-secondary', type: 'button', 'data-bs-dismiss': 'modal', text: 'Voltar' }),
-        h('button', { class: 'btn btn-primary', type: 'submit', text: 'Preparar mensagem' })));
-    corpoPedido.replaceChildren(form);
-    mostrar(modalPedido, 'Modal');
+      modo === 'registo' ? nome : null, email, modo === 'registo' ? tel : null, modo !== 'recuperar' ? senha : null,
+      h('div', { class: 'col-12' }, erro, ok), h('div', { class: 'col-12 d-grid' }, botao),
+      h('div', { class: 'col-12 text-center small' }, modo === 'recuperar'
+        ? h('button', { class: 'btn btn-link btn-sm', type: 'button', onclick: () => abrirAuth('entrar'), text: '← Voltar a entrar' })
+        : modo === 'entrar' ? h('button', { class: 'btn btn-link btn-sm', type: 'button', onclick: () => abrirAuth('recuperar'), text: 'Esqueci-me da palavra-passe' }) : null));
+    mAuth.titulo(modo === 'registo' ? 'Criar conta' : modo === 'recuperar' ? 'Recuperar palavra-passe' : 'Entrar');
+    mAuth.corpo.replaceChildren(h('div', { class: 'd-grid gap-3' },
+      modo !== 'recuperar' ? h('ul', { class: 'nav nav-pills gap-1' }, nav) : null,
+      depoisDeEntrar ? h('p', { class: 'small text-body-secondary mb-0', text: 'Para continuar, entre na sua conta ou crie uma nova.' }) : null, form));
+    mAuth.abrir();
   }
 
-  function montarMensagem(id, p) {
-    var L = estado.loja, r = p.resumo, c = canal(id);
-    var tag = '#LL:' + b64url(JSON.stringify({ c: p.codigo, n: p.nome, t: p.tel, k: id, o: p.notas, i: r.linhas.map(function (l) { return [l.id, l.qtd]; }) }));
-    var itens = r.linhas.map(function (l) { return '- ' + l.qtd + ' x ' + l.nome + ': ' + (l.preco == null ? 'sob consulta' : kz(l.preco * l.qtd)); }).join('\n');
-    var total = kz(r.total) + (r.consulta ? ' + itens sob consulta' : '');
-    var primeiro = L.dono.split(' ')[0];
-    if (id === 'whatsapp') return { texto:
-      'Olá ' + primeiro + ', quero fazer um pedido na *' + L.nome + '*.\n\n*Pedido ' + p.codigo + '*\n' + itens + '\n*Total: ' + total + '*\n\n*Nome:* ' + p.nome + '\n*Telefone:* ' + p.tel + (p.notas ? '\n*Observações:* ' + p.notas : '') + '\n\nObrigado!\n\nRef: ' + tag,
-      link: 'https://wa.me/' + intl(c.valor) + '?text=' };
-    if (id === 'sms') return { texto:
-      L.nome + ' - Pedido ' + p.codigo + ': ' + r.linhas.map(function (l) { return l.qtd + 'x ' + l.nome; }).join(', ') + '. Total ' + total + '. ' + p.nome + ', ' + p.tel + '.' + (p.notas ? ' Obs: ' + p.notas : '') + ' Ref: ' + tag,
-      link: 'sms:' + digitos(c.valor) + '?&body=' };
-    if (id === 'email') return { assunto: 'Pedido ' + p.codigo + ' - ' + L.nome, texto:
-      'Bom dia, ' + L.dono + '.\n\nGostaria de fazer o seguinte pedido:\n\nPedido: ' + p.codigo + '\n' + itens + '\nTotal: ' + total + '\n\nNome: ' + p.nome + '\nTelefone: ' + p.tel + (p.notas ? '\nObservações: ' + p.notas : '') + '\n\nFico a aguardar o seu contacto.\n\nCumprimentos,\n' + p.nome + '\n\nRef: ' + tag,
-      link: 'mailto:' + c.valor + '?subject=' };
-    return { texto:
-      'Ligue para ' + formatarTel(c.valor) + ' (' + c.horario + ') e diga:\n\n"Olá, ' + primeiro + '. Chamo-me ' + p.nome + ' e quero fazer o pedido ' + p.codigo + ': ' + r.linhas.map(function (l) { return l.qtd + ' ' + l.nome; }).join(', ') + '. O total é ' + total + '. O meu número é ' + p.tel + '."' + (p.notas ? '\n\nNão se esqueça de referir: ' + p.notas : '') + '\n\nRef: ' + tag,
-      link: 'tel:' + digitos(c.valor) };
+  function abrirNovaSenha() {
+    const s1 = LL.campo('ns-1', 'Nova palavra-passe', '', { tipo: 'password', auto: 'new-password', max: '72' });
+    const s2 = LL.campo('ns-2', 'Repita a palavra-passe', '', { tipo: 'password', auto: 'new-password', max: '72' });
+    const erro = h('div', { class: 'small text-danger', role: 'alert' });
+    mAuth.titulo('Nova palavra-passe');
+    mAuth.corpo.replaceChildren(h('form', { class: 'row g-3', onsubmit: async e => {
+      e.preventDefault(); erro.textContent = '';
+      if (s1.campo.value.length < 8) { erro.textContent = 'Pelo menos 8 caracteres.'; return; }
+      if (s1.campo.value !== s2.campo.value) { erro.textContent = 'As palavras-passe não coincidem.'; return; }
+      const { error } = await sb.auth.updateUser({ password: s1.campo.value });
+      if (error) { erro.textContent = LL.erro(error); return; }
+      mAuth.fechar(); LL.aviso('Palavra-passe alterada');
+    } }, s1, s2, h('div', { class: 'col-12' }, erro), h('div', { class: 'col-12 d-grid' }, h('button', { class: 'btn btn-primary', type: 'submit', text: 'Guardar' }))));
+    mAuth.abrir();
   }
 
-  function mostrarMensagem() {
-    var p = { codigo: codigoPedido(), nome: pedido.nome, tel: pedido.tel, notas: pedido.notas, resumo: resumoCarrinho() };
-    var c = canal(pedido.canal), m = montarMensagem(pedido.canal, p);
-    var caixa = h('div', { class: 'mensagem-pronta', text: (m.assunto ? 'Assunto: ' + m.assunto + '\n\n' : '') + m.texto });
-    var bCopiar = h('button', { class: 'btn btn-outline-secondary', type: 'button' }, icone('copiar', 16), ' Copiar mensagem');
-    bCopiar.addEventListener('click', function () { copiar(m.texto, bCopiar, caixa); });
-    var href = pedido.canal === 'email' ? m.link + encodeURIComponent(m.assunto) + '&body=' + encodeURIComponent(m.texto)
-      : pedido.canal === 'chamada' ? m.link : m.link + encodeURIComponent(m.texto);
-    var rotuloAbrir = { whatsapp: 'Abrir no WhatsApp', sms: 'Abrir app de SMS', email: 'Abrir app de email', chamada: 'Ligar agora' }[pedido.canal];
-    var passos = {
-      whatsapp: 'Carregue em "Abrir no WhatsApp". A mensagem já vai escrita; só precisa de a enviar.',
-      sms: 'Copie a mensagem e envie-a por SMS para ' + formatarTel(c.valor) + '. O botão abaixo pode abrir a app de SMS, se o seu aparelho permitir.',
-      email: 'Copie a mensagem e envie-a para ' + c.valor + '. O botão abaixo pode abrir a sua app de email, se o seu aparelho permitir.',
-      chamada: 'Ligue para ' + formatarTel(c.valor) + ' e use o texto abaixo como guia.'
-    }[pedido.canal];
-    corpoPedido.replaceChildren(h('div', { class: 'd-grid gap-3' },
-      h('div', { class: 'd-flex align-items-center gap-2' }, icone(pedido.canal, 22), h('div', null, h('div', { class: 'rotulo', text: 'Pedido ' + p.codigo }), h('div', { class: 'fw-semibold', text: 'Mensagem pronta para ' + c.nome }))),
-      h('p', { class: 'mb-0', text: passos }),
-      pedido.canal !== 'chamada' && pedido.canal !== 'whatsapp' ? h('div', { class: 'p-3 rounded-3 mono', style: 'background:var(--ambar-fundo)' }, h('span', { class: 'rotulo d-block mb-1', text: 'Enviar para' }), h('span', { style: 'user-select:all', text: c.id === 'email' ? c.valor : formatarTel(c.valor) })) : null,
-      caixa,
-      h('div', { class: 'd-flex flex-wrap justify-content-end gap-2' },
-        h('button', { class: 'btn btn-link text-body-secondary me-auto', type: 'button', onclick: abrirPedido, text: '← Mudar dados ou canal' }),
-        bCopiar,
-        h('a', { class: 'btn btn-primary', href: href, target: pedido.canal === 'whatsapp' ? '_blank' : null, rel: 'noopener noreferrer' }, icone(pedido.canal, 16), ' ' + rotuloAbrir)),
-      h('div', { class: 'border-top pt-3 d-flex flex-wrap align-items-center gap-2' },
-        h('span', { class: 'small text-body-secondary me-auto', text: 'Depois de enviar, pode esvaziar o carrinho.' }),
-        h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: function () { carrinho = []; pedido.notas = ''; guardarCarrinho(); esconder(modalPedido, 'Modal'); aviso('Obrigado! Responderei o mais breve possível.'); } }, 'Já enviei, esvaziar carrinho'))));
+  // ================= Novo pedido =================
+  function abrirPedido() {
+    const r = resumo();
+    if (!r.linhas.length) { LL.aviso('O carrinho está vazio.'); return; }
+    const metodos = (loja.pagamentos || []).filter(m => m.ativo);
+    let escolhido = metodos[0] ? metodos[0].nome : '';
+    const detalhes = h('div', { class: 'mensagem-pronta' });
+    const mostrarDetalhes = () => { const m = metodos.find(x => x.nome === escolhido); detalhes.textContent = m ? m.detalhes : 'O método de pagamento é combinado no chat.'; };
+    const notas = LL.campo('pd-notas', 'Descreva o que precisa (opcional)', '', { area: true, max: '1000', ph: 'Ex.: quero o site com as cores da minha empresa e pronto até ao fim do mês.' });
+    const erro = h('div', { class: 'small text-danger', role: 'alert' });
+    const botao = h('button', { class: 'btn btn-primary btn-lg', type: 'submit', text: 'Enviar pedido' });
+    mPedido.corpo.replaceChildren(h('form', { class: 'd-grid gap-3', onsubmit: async e => {
+      e.preventDefault(); erro.textContent = ''; botao.disabled = true;
+      const { data, error } = await sb.from('pedidos').insert({ itens: carrinho.map(i => ({ id: i.id, qtd: i.qtd })), notas: notas.campo.value.trim(), metodo_pagamento: escolhido }).select().single();
+      botao.disabled = false;
+      if (error) { erro.textContent = LL.erro(error); return; }
+      carrinho = []; guardarCarrinho(); mPedido.fechar();
+      LL.aviso('Pedido ' + data.codigo + ' enviado. Vai receber a validação no chat.');
+      abrirConta('pedidos');
+    } },
+      h('div', { class: 'p-3 rounded-3 caixa-suave' },
+        r.linhas.map(l => h('div', { class: 'd-flex justify-content-between gap-2 small' }, h('span', { text: l.qtd + ' × ' + l.nome }), h('span', { class: 'mono', text: l.preco == null ? 'sob consulta' : LL.kz(l.preco * l.qtd) }))),
+        h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total' }), h('span', { text: LL.kz(r.total) + (r.consulta ? ' + sob consulta' : '') }))),
+      h('div', { class: 'small text-body-secondary', text: 'Pedido em nome de ' + (perfil.nome || perfil.email) + ' · ' + perfil.email }),
+      metodos.length ? h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Como vai pagar?' }), h('div', { class: 'row g-2' }, metodos.map((m, i) => {
+        const r2 = h('input', { type: 'radio', name: 'pd-metodo', id: 'pd-m-' + i, value: m.nome }); r2.checked = m.nome === escolhido;
+        r2.addEventListener('change', () => { escolhido = m.nome; mostrarDetalhes(); });
+        return h('div', { class: 'col-sm-6' }, h('label', { class: 'opcao-canal', for: 'pd-m-' + i }, r2, h('span', { class: 'fw-semibold', text: m.nome })));
+      })), h('div', { class: 'mt-2' }, h('div', { class: 'form-text mb-1', text: 'Dados para pagamento (pague só depois de o pedido ser validado):' }), detalhes)) : null,
+      notas, erro,
+      h('p', { class: 'small text-body-secondary mb-0', text: 'Primeiro valido o pedido e confirmo o valor final. Depois paga e envia o comprovativo aqui no site.' }),
+      h('div', { class: 'd-flex justify-content-end gap-2' }, h('button', { class: 'btn btn-outline-secondary', type: 'button', 'data-bs-dismiss': 'modal', text: 'Voltar' }), botao)));
+    mostrarDetalhes(); mPedido.abrir();
   }
 
-  // ================= Arranque =================
-  principal.replaceChildren(h('div', { class: 'container py-5 text-center text-body-secondary', text: 'A carregar a loja…' }));
-  fetch('dados.json', { cache: 'no-cache' })
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-    .then(function (d) { estado = d; document.title = d.loja.nome || document.title; renderTudo(); })
-    .catch(function () {
-      principal.replaceChildren(h('div', { class: 'container py-5 text-center' },
-        h('p', { class: 'fw-semibold', text: 'Não foi possível carregar a loja.' }),
-        h('p', { class: 'text-body-secondary', text: 'Verifique a ligação à internet e recarregue a página. Se abriu o ficheiro diretamente no computador, use um servidor (veja o README).' })));
+  // ================= A minha conta =================
+  async function abrirConta(aba) {
+    if (!sessao) { abrirAuth('entrar', () => abrirConta(aba)); return; }
+    if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; }
+    const abas = [['pedidos', 'Pedidos'], ['conversa', 'Conversa' + (naoLidas ? ' (' + naoLidas + ')' : '')], ['dados', 'Os meus dados']];
+    const conteudo = h('div', { class: 'pt-3' });
+    mConta.titulo('Olá, ' + ((perfil && perfil.nome.split(' ')[0]) || 'cliente'));
+    mConta.corpo.replaceChildren(h('ul', { class: 'nav nav-pills gap-1' }, abas.map(([a, t]) => h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (aba === a ? ' active' : ''), onclick: () => abrirConta(a) }, t)))), conteudo);
+    mConta.abrir();
+    if (aba === 'conversa') {
+      chatAtivo = LL.chat({ clienteId: sessao.user.id, souAdmin: false, textoInicial: abrirConta.texto || '' }); abrirConta.texto = '';
+      naoLidas = 0; renderTopo();
+      conteudo.replaceChildren(h('p', { class: 'small text-body-secondary', text: 'Fale diretamente comigo. Pode anexar imagens ou PDF (até 10 MB).' }), chatAtivo.el);
+      setTimeout(() => chatAtivo && chatAtivo.focar(), 400);
+    } else if (aba === 'dados') contaDados(conteudo);
+    else contaPedidos(conteudo);
+  }
+
+  async function contaPedidos(c) {
+    c.replaceChildren(h('div', { class: 'text-body-secondary small', text: 'A carregar pedidos…' }));
+    const [p, e] = await Promise.all([sb.from('pedidos').select('*').order('criado', { ascending: false }), sb.from('entregas').select('*').order('criado')]);
+    if (p.error) { c.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(p.error) })); return; }
+    if (!p.data.length) { c.replaceChildren(h('div', { class: 'vazio' }, h('p', { text: 'Ainda não fez nenhum pedido.' }), h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'modal', text: 'Ver serviços' }))); return; }
+    c.replaceChildren(h('div', { class: 'd-grid gap-3' }, p.data.map(ped => cartaoPedido(ped, (e.data || []).filter(x => x.pedido_id === ped.id), c))));
+  }
+
+  function cartaoPedido(p, entregas, contentor) {
+    const metodo = (loja.pagamentos || []).find(m => m.nome === p.metodo_pagamento);
+    const podePagar = p.estado === 'validado' || p.estado === 'comprovativo';
+    const ficheiro = h('input', { type: 'file', class: 'd-none', accept: 'image/jpeg,image/png,image/webp,application/pdf' });
+    const estadoEnvio = h('div', { class: 'small', role: 'status' });
+    ficheiro.addEventListener('change', async () => {
+      const f = ficheiro.files[0]; ficheiro.value = ''; if (!f) return;
+      if (f.size > 10 * 1048576) { estadoEnvio.className = 'small text-danger'; estadoEnvio.textContent = 'O ficheiro tem mais de 10 MB.'; return; }
+      if (!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(f.type)) { estadoEnvio.className = 'small text-danger'; estadoEnvio.textContent = 'Envie uma imagem ou um PDF.'; return; }
+      estadoEnvio.className = 'small'; estadoEnvio.textContent = 'A enviar o comprovativo…';
+      try {
+        const path = sessao.user.id + '/comprovativos/' + p.codigo + '-' + Date.now() + '-' + LL.nomeSeguro(f.name);
+        const up = await sb.storage.from('anexos').upload(path, f, { contentType: f.type }); if (up.error) throw up.error;
+        const { error } = await sb.from('mensagens').insert({ cliente_id: sessao.user.id, autor: 'cliente', tipo: 'comprovativo', pedido_id: p.id, texto: 'Comprovativo de pagamento do pedido ' + p.codigo, anexo_path: path, anexo_nome: f.name.slice(0, 120), anexo_tipo: f.type });
+        if (error) throw error;
+        LL.aviso('Comprovativo enviado. Vou confirmar o pagamento em breve.'); contaPedidos(contentor);
+      } catch (er) { estadoEnvio.className = 'small text-danger'; estadoEnvio.textContent = LL.erro(er); }
     });
+    return h('article', { class: 'card' }, h('div', { class: 'card-body d-grid gap-3' },
+      h('div', { class: 'd-flex flex-wrap align-items-center gap-2' }, h('strong', { class: 'mono', text: p.codigo }), LL.selo(p.estado), h('span', { class: 'small text-body-secondary ms-auto', text: LL.data(p.criado) })),
+      LL.linhaTempo(p.estado),
+      h('div', { class: 'small' }, p.itens.map(i => h('div', { class: 'd-flex justify-content-between gap-2' }, h('span', { text: i.qtd + ' × ' + i.nome }), h('span', { class: 'mono', text: i.preco == null ? 'sob consulta' : LL.kz(i.preco * i.qtd) }))),
+        h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total a pagar' }), h('span', { text: LL.kz(p.total) + (p.tem_consulta && p.estado === 'pendente' ? ' + sob consulta' : '') }))),
+      p.nota_admin ? h('div', { class: 'alert alert-info mb-0 small', text: p.nota_admin }) : null,
+      podePagar ? h('div', { class: 'caixa-pagamento d-grid gap-2' },
+        h('div', { class: 'fw-semibold', text: 'Pagamento: ' + (p.metodo_pagamento || 'a combinar') }),
+        metodo ? h('div', { class: 'mensagem-pronta', text: metodo.detalhes }) : null,
+        p.estado === 'comprovativo' ? h('div', { class: 'small text-body-secondary', text: 'Comprovativo recebido. Pode enviar outro se for preciso.' }) : null,
+        h('div', { class: 'd-flex gap-2 flex-wrap' }, h('label', { class: 'btn btn-primary' }, LL.icone('clipe'), ' Enviar comprovativo', ficheiro)), estadoEnvio) : null,
+      p.estado === 'concluido' ? h('div', { class: 'd-grid gap-2' }, h('div', { class: 'fw-semibold', text: 'Ficheiros do projeto' }),
+        entregas.length ? entregas.map(en => h('button', { class: 'btn btn-outline-primary text-start d-flex align-items-center gap-2', type: 'button', onclick: () => LL.abrirPrivado('entregas', en.path, true) }, LL.icone('descarregar'), h('span', { class: 'flex-grow-1 text-truncate', text: en.nome }), h('span', { class: 'small mono', text: LL.tamanho(en.tamanho) })))
+          : h('div', { class: 'small text-body-secondary', text: 'O projeto foi entregue. Veja a conversa para mais detalhes.' })) : null,
+      h('div', null, h('button', { class: 'btn btn-link btn-sm px-0', type: 'button', onclick: () => { abrirConta.texto = 'Sobre o pedido ' + p.codigo + ': '; abrirConta('conversa'); } }, LL.icone('chat', 14), ' Falar sobre este pedido'))));
+  }
+
+  function contaDados(c) {
+    const nome = LL.campo('cd-nome', 'Nome', perfil.nome, { max: '80', auto: 'name', col: 'col-md-6' });
+    const tel = LL.campo('cd-tel', 'Telefone', perfil.telefone, { tipo: 'tel', max: '20', auto: 'tel', col: 'col-md-6' });
+    const msg = h('div', { class: 'small', role: 'status' });
+    c.replaceChildren(h('form', { class: 'row g-3', style: 'max-width:640px', onsubmit: async e => {
+      e.preventDefault();
+      if (nome.campo.value.trim().length < 3) { msg.className = 'small text-danger'; msg.textContent = 'Escreva o seu nome completo.'; return; }
+      const { error } = await sb.from('perfis').update({ nome: nome.campo.value.trim(), telefone: LL.digitos(tel.campo.value) }).eq('id', sessao.user.id);
+      if (error) { msg.className = 'small text-danger'; msg.textContent = LL.erro(error); return; }
+      perfil.nome = nome.campo.value.trim(); perfil.telefone = LL.digitos(tel.campo.value); renderTopo();
+      msg.className = 'small text-success'; msg.textContent = 'Dados guardados.';
+    } }, nome, tel,
+      h('div', { class: 'col-12' }, h('div', { class: 'form-label', text: 'Email' }), h('div', { class: 'mono', text: perfil.email }), h('div', { class: 'form-text', text: 'É para este email que envio avisos sobre os seus projetos.' })),
+      h('div', { class: 'col-12' }, msg),
+      h('div', { class: 'col-12 d-flex gap-2 flex-wrap' }, h('button', { class: 'btn btn-primary', type: 'submit', text: 'Guardar' }),
+        h('button', { class: 'btn btn-outline-danger ms-auto', type: 'button', onclick: async () => { await sb.auth.signOut(); mConta.fechar(); LL.aviso('Sessão terminada'); }, text: 'Terminar sessão' }))));
+  }
+
+  carregar();
 })();
