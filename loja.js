@@ -6,6 +6,7 @@
   if (!LL.configurado) { raiz.replaceChildren(LL.avisoConfig()); return; }
 
   let loja = {}, produtos = [], trabalhos = [], sessao = null, perfil = null;
+  let avaliacoes = [], gostosTotal = {}, meusGostos = new Set(), minhasAvaliacoes = {};
   let carrinho = LL.lerLocal('ll_carrinho', []);
   let filtroCat = 'Todos', busca = '', naoLidas = 0, canalAvisos = null, depoisDeEntrar = null, chatAtivo = null;
 
@@ -28,11 +29,14 @@
   // ================= Dados =================
   async function carregar() {
     principal.replaceChildren(h('div', { class: 'container py-5 text-center text-body-secondary', text: 'A carregar a loja…' }));
-    const [l, p, t] = await Promise.all([
+    const [l, p, t, av, gt] = await Promise.all([
       sb.from('loja').select('dados').eq('id', 1).maybeSingle(),
       sb.from('produtos').select('*').eq('ativo', true).order('ordem').order('criado'),
-      sb.from('trabalhos').select('*').order('ordem').order('criado', { ascending: false })
+      sb.from('trabalhos').select('*').order('ordem').order('criado', { ascending: false }),
+      sb.from('avaliacoes').select('id,nome_publico,servicos,estrelas,recomenda,comentario,resposta,criado').eq('visivel', true).order('criado', { ascending: false }).limit(200),
+      sb.rpc('contar_gostos')
     ]);
+    avaliacoes = av.data || []; gostosTotal = {}; (gt.data || []).forEach(g => { gostosTotal[g.trabalho_id] = Number(g.total); });
     if (l.error || p.error || t.error) {
       principal.replaceChildren(h('div', { class: 'container py-5 text-center' }, h('p', { class: 'fw-semibold', text: 'Não foi possível carregar a loja.' }), h('p', { class: 'text-body-secondary', text: LL.erro(l.error || p.error || t.error) })));
       return;
@@ -53,13 +57,27 @@
     }
     setTimeout(() => {                       // fora do callback, como recomenda o Supabase
       if (evento === 'PASSWORD_RECOVERY') abrirNovaSenha();
-      if (s) carregarPerfil(); else { perfil = null; pararAvisos(); renderTopo(); }
+      if (s) carregarPerfil(); else { perfil = null; pararAvisos(); renderTopo(); carregarGostos(); }
     }, 0);
   });
+  async function carregarGostos() {
+    meusGostos = new Set();
+    if (sessao) { const { data } = await sb.from('gostos').select('trabalho_id').eq('cliente_id', sessao.user.id); (data || []).forEach(g => meusGostos.add(g.trabalho_id)); }
+    const s = document.getElementById('trabalhos'); if (s) s.replaceWith(secTrabalhos());
+  }
+  async function alternarGosto(t) {
+    if (!sessao) { abrirAuth('entrar', () => alternarGosto(t)); return; }
+    const tem = meusGostos.has(t.id);
+    // Atualização otimista: muda já no ecrã e confirma no servidor
+    if (tem) { meusGostos.delete(t.id); gostosTotal[t.id] = Math.max(0, (gostosTotal[t.id] || 1) - 1); } else { meusGostos.add(t.id); gostosTotal[t.id] = (gostosTotal[t.id] || 0) + 1; }
+    const s = document.getElementById('trabalhos'); if (s) s.replaceWith(secTrabalhos());
+    const r = tem ? await sb.from('gostos').delete().eq('trabalho_id', t.id).eq('cliente_id', sessao.user.id) : await sb.from('gostos').insert({ trabalho_id: t.id });
+    if (r.error && !/duplicate/i.test(r.error.message)) { LL.aviso(LL.erro(r.error), 'erro'); carregarGostos(); }
+  }
   async function carregarPerfil() {
     const { data } = await sb.from('perfis').select('*').eq('id', sessao.user.id).maybeSingle();
     perfil = data || { id: sessao.user.id, nome: '', email: sessao.user.email, telefone: '' };
-    renderTopo(); iniciarAvisos();
+    renderTopo(); iniciarAvisos(); carregarGostos();
     if (depoisDeEntrar) { const f = depoisDeEntrar; depoisDeEntrar = null; f(); }
   }
   async function contarNaoLidas() {
@@ -76,14 +94,14 @@
   function pararAvisos() { if (canalAvisos) { sb.removeChannel(canalAvisos); canalAvisos = null; } naoLidas = 0; }
 
   // ================= Página =================
-  function renderTudo() { renderTopo(); principal.replaceChildren(secHeroi(), secLoja(), secTrabalhos(), secContacto()); renderRodape(); renderCarrinho(); }
+  function renderTudo() { renderTopo(); principal.replaceChildren(secHeroi(), secLoja(), secTrabalhos(), secAvaliacoes(), secContacto()); renderRodape(); renderCarrinho(); }
   const totalItens = () => carrinho.reduce((s, i) => s + i.qtd, 0);
 
   function renderTopo() {
     const n = totalItens();
     topo.replaceChildren(h('div', { class: 'container' },
       h('a', { class: 'marca', href: '#inicio' }, LL.logo(), loja.nome || 'LeloLabs'),
-      h('nav', { 'aria-label': 'Secções' }, h('a', { href: '#loja', text: 'Serviços' }), h('a', { href: '#trabalhos', text: 'Trabalhos' }), h('a', { href: '#contacto', text: 'Contacto' })),
+      h('nav', { 'aria-label': 'Secções' }, h('a', { href: '#loja', text: 'Serviços' }), h('a', { href: '#trabalhos', text: 'Trabalhos' }), h('a', { href: '#avaliacoes', text: 'Avaliações' }), h('a', { href: '#contacto', text: 'Contacto' })),
       h('div', { class: 'acoes-topo d-flex gap-2' },
         h('button', { class: 'btn btn-outline-secondary btn-conta', type: 'button', onclick: () => sessao ? abrirConta('pedidos') : abrirAuth('entrar') },
           LL.icone('pessoa'), h('span', { class: 'd-none d-md-inline ms-1', text: sessao ? ((perfil && perfil.nome.split(' ')[0]) || 'A minha conta') : 'Entrar' }),
@@ -165,10 +183,58 @@
             t.categoria ? h('span', { class: 'rotulo', text: t.categoria }) : null,
             h('h3', { class: 'h5 mb-0', text: t.titulo }),
             t.descricao ? h('p', { class: 'text-body-secondary mb-0', text: t.descricao }) : null,
-            h('div', { class: 'mt-auto d-flex gap-3 flex-wrap' },
+            h('div', { class: 'mt-auto d-flex gap-3 flex-wrap align-items-center' },
+              h('button', { class: 'btn btn-sm btn-gosto' + (meusGostos.has(t.id) ? ' ativo' : ''), type: 'button', 'aria-pressed': String(meusGostos.has(t.id)), 'aria-label': (meusGostos.has(t.id) ? 'Retirar gosto' : 'Gosto') + ' — ' + t.titulo, onclick: () => alternarGosto(t) },
+                h('span', { 'aria-hidden': 'true', text: meusGostos.has(t.id) ? '♥' : '♡' }), ' ' + (gostosTotal[t.id] || 0)),
               LL.url(t.video_url) ? h('a', { class: 'fw-semibold text-decoration-none', href: LL.url(t.video_url), target: '_blank', rel: 'noopener noreferrer', text: '▶ Ver vídeo' }) : null,
               LL.url(t.link) ? h('a', { class: 'fw-semibold text-decoration-none', href: LL.url(t.link), target: '_blank', rel: 'noopener noreferrer', text: 'Abrir projeto ↗' }) : null))))))
         : h('div', { class: 'vazio', text: 'Os trabalhos serão publicados em breve.' })));
+  }
+
+  const estrelas = n => h('span', { class: 'estrelas', 'aria-label': n + ' de 5 estrelas', text: '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n) });
+  function secAvaliacoes() {
+    const n = avaliacoes.length;
+    const media = n ? avaliacoes.reduce((s, a) => s + a.estrelas, 0) / n : 0;
+    const recom = n ? Math.round(avaliacoes.filter(a => a.recomenda).length / n * 100) : 0;
+    const barras = [5, 4, 3, 2, 1].map(e => { const c = avaliacoes.filter(a => a.estrelas === e).length; return h('div', { class: 'd-flex align-items-center gap-2 small' }, h('span', { class: 'mono', text: e + '★' }), h('div', { class: 'barra flex-grow-1' }, h('i', { style: 'width:' + (n ? c / n * 100 : 0) + '%' })), h('span', { class: 'mono', style: 'min-width:2ch', text: c })); });
+    return h('section', { class: 'seccao', id: 'avaliacoes' }, h('div', { class: 'container' },
+      h('span', { class: 'rotulo', text: 'Opinião de quem já comprou' }), h('h2', { class: 'mb-4', text: 'Avaliações' }),
+      n ? h('div', { class: 'row g-4' },
+        h('div', { class: 'col-lg-4' }, h('div', { class: 'card' }, h('div', { class: 'card-body d-grid gap-3' },
+          h('div', { class: 'd-flex align-items-end gap-2' }, h('span', { class: 'media-aval', text: media.toFixed(1).replace('.', ',') }), h('div', null, estrelas(Math.round(media)), h('div', { class: 'small text-body-secondary', text: n + (n === 1 ? ' avaliação' : ' avaliações') }))),
+          h('div', { class: 'fw-semibold', text: recom + '% recomendam' }), barras,
+          h('p', { class: 'small text-body-secondary mb-0', text: 'Só podem avaliar clientes com um projeto concluído.' })))),
+        h('div', { class: 'col-lg-8 d-grid gap-3' }, avaliacoes.slice(0, 12).map(a => h('article', { class: 'card' }, h('div', { class: 'card-body d-grid gap-2' },
+          h('div', { class: 'd-flex align-items-center gap-2 flex-wrap' }, h('span', { class: 'avatar', text: LL.iniciais(a.nome_publico) }), h('strong', { text: a.nome_publico }), estrelas(a.estrelas),
+            h('span', { class: 'badge ms-auto ' + (a.recomenda ? 'text-bg-success' : 'text-bg-secondary'), text: a.recomenda ? '👍 Recomenda' : 'Não recomenda' })),
+          a.servicos ? h('div', { class: 'small text-body-secondary', text: a.servicos + ' · ' + new Date(a.criado).toLocaleDateString('pt-PT') }) : null,
+          a.comentario ? h('p', { class: 'mb-0', text: a.comentario }) : null,
+          a.resposta ? h('div', { class: 'resposta-aval' }, h('div', { class: 'rotulo mb-1', text: 'Resposta de ' + (loja.dono || 'LeloLabs').split(' ')[0] }), h('div', { text: a.resposta })) : null)))))
+        : h('div', { class: 'vazio', text: 'Ainda não há avaliações. Depois de concluir o seu projeto, pode deixar a sua opinião na sua conta.' })));
+  }
+
+  function formAvaliacao(p, atual, contentor) {
+    let est = atual ? atual.estrelas : 5, rec = atual ? atual.recomenda : true;
+    const msg = h('div', { class: 'small', role: 'status' });
+    const grupoEst = h('div', { class: 'escolher-estrelas', role: 'radiogroup', 'aria-label': 'Estrelas' });
+    const desenhar = () => grupoEst.replaceChildren(...[1, 2, 3, 4, 5].map(n => h('button', { type: 'button', role: 'radio', 'aria-checked': String(n === est), 'aria-label': n + ' estrelas', class: n <= est ? 'on' : '', onclick: () => { est = n; desenhar(); }, text: '★' })));
+    desenhar();
+    const recSim = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + p.id, id: 'rec-s-' + p.id }); recSim.checked = rec;
+    const recNao = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + p.id, id: 'rec-n-' + p.id }); recNao.checked = !rec;
+    recSim.addEventListener('change', () => { rec = true; }); recNao.addEventListener('change', () => { rec = false; });
+    const com = h('textarea', { class: 'form-control', rows: '3', maxlength: '1000', id: 'com-' + p.id, placeholder: 'Conte como correu: qualidade, prazo, atendimento…' }); com.value = atual ? atual.comentario : '';
+    return h('form', { class: 'caixa-suave rounded-3 p-3 d-grid gap-2', onsubmit: async e => {
+      e.preventDefault(); msg.className = 'small'; msg.textContent = 'A guardar…';
+      const dados = { estrelas: est, recomenda: rec, comentario: com.value.trim() };
+      const r = atual ? await sb.from('avaliacoes').update(dados).eq('id', atual.id) : await sb.from('avaliacoes').insert(Object.assign({ pedido_id: p.id }, dados));
+      if (r.error) { msg.className = 'small text-danger'; msg.textContent = LL.erro(r.error); return; }
+      LL.aviso('Obrigado pela sua avaliação!'); contaPedidos(contentor); carregar();
+    } },
+      h('div', { class: 'fw-semibold', text: atual ? 'A sua avaliação' : 'Avalie este projeto' }), grupoEst,
+      h('div', { class: 'd-flex gap-2 flex-wrap' }, recSim, h('label', { class: 'btn btn-sm btn-outline-success', for: recSim.id, text: '👍 Recomendo' }), recNao, h('label', { class: 'btn btn-sm btn-outline-secondary', for: recNao.id, text: 'Não recomendo' })),
+      h('label', { class: 'visually-hidden', for: com.id, text: 'Comentário' }), com,
+      atual && atual.resposta ? h('div', { class: 'resposta-aval small' }, h('strong', { text: 'Resposta: ' }), atual.resposta) : null,
+      msg, h('div', null, h('button', { class: 'btn btn-primary btn-sm', type: 'submit', text: atual ? 'Atualizar avaliação' : 'Publicar avaliação' })));
   }
 
   function secContacto() {
@@ -363,6 +429,8 @@
     if (p.error) { c.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(p.error) })); return; }
     const ids = p.data.map(x => x.id);
     const e = ids.length ? await sb.from('entregas').select('*').in('pedido_id', ids).order('criado') : { data: [] };
+    minhasAvaliacoes = {};
+    if (ids.length) { const av = await sb.from('avaliacoes').select('*').eq('cliente_id', uid); (av.data || []).forEach(a => { minhasAvaliacoes[a.pedido_id] = a; }); }
     if (!p.data.length) { c.replaceChildren(h('div', { class: 'vazio' }, h('p', { text: 'Ainda não fez nenhum pedido.' }), h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'modal', text: 'Ver serviços' }))); return; }
     c.replaceChildren(h('div', { class: 'd-grid gap-3' }, p.data.map(ped => cartaoPedido(ped, (e.data || []).filter(x => x.pedido_id === ped.id), c))));
   }
@@ -403,6 +471,7 @@
       p.estado === 'concluido' ? h('div', { class: 'd-grid gap-2' }, h('div', { class: 'fw-semibold', text: 'Ficheiros do projeto' }),
         entregas.length ? entregas.map(en => h('button', { class: 'btn btn-outline-primary text-start d-flex align-items-center gap-2', type: 'button', onclick: () => LL.abrirPrivado('entregas', en.path, true) }, LL.icone('descarregar'), h('span', { class: 'flex-grow-1 text-truncate', text: en.nome }), h('span', { class: 'small mono', text: LL.tamanho(en.tamanho) })))
           : h('div', { class: 'small text-body-secondary', text: 'O projeto foi entregue. Veja a conversa para mais detalhes.' })) : null,
+      p.estado === 'concluido' ? formAvaliacao(p, minhasAvaliacoes[p.id], contentor) : null,
       h('div', null, h('button', { class: 'btn btn-link btn-sm px-0', type: 'button', onclick: () => { abrirConta.texto = 'Sobre o pedido ' + p.codigo + ': '; abrirConta('conversa'); } }, LL.icone('chat', 14), ' Falar sobre este pedido'))));
   }
 

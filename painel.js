@@ -77,7 +77,7 @@
   function renderTopo() {
     const totalNaoLidas = Object.values(naoLidasPor).reduce((s, n) => s + n, 0);
     const porVer = pedidos.filter(p => p.estado === 'pendente' || p.estado === 'comprovativo').length;
-    const abas = [['pedidos', 'Pedidos', porVer], ['conversas', 'Conversas', totalNaoLidas], ['clientes', 'Clientes'], ['catalogo', 'Serviços'], ['trabalhos', 'Trabalhos'], ['loja', 'Loja e pagamentos']];
+    const abas = [['pedidos', 'Pedidos', porVer], ['conversas', 'Conversas', totalNaoLidas], ['clientes', 'Clientes'], ['catalogo', 'Serviços'], ['trabalhos', 'Trabalhos'], ['avaliacoes', 'Avaliações'], ['loja', 'Loja e pagamentos']];
     topo.replaceChildren(h('div', { class: 'container flex-wrap py-2' },
       h('a', { class: 'marca', href: 'index.html', target: '_blank', rel: 'noopener' }, LL.logo(), 'Painel'),
       h('ul', { class: 'nav nav-pills gap-1 flex-wrap ms-lg-3' }, abas.map(([a, t, n]) => h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (aba === a ? ' active' : ''), onclick: () => mudarAba(a) }, t, n ? h('span', { class: 'badge rounded-pill text-bg-danger ms-1', text: n }) : null)))),
@@ -85,7 +85,7 @@
   }
   function mudarAba(a) { if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; } aba = a; render(); }
   function renderConteudo() {
-    ({ pedidos: abaPedidos, conversas: abaConversas, clientes: abaClientes, catalogo: abaCatalogo, trabalhos: abaTrabalhos, loja: abaLoja })[aba]();
+    ({ pedidos: abaPedidos, conversas: abaConversas, clientes: abaClientes, catalogo: abaCatalogo, trabalhos: abaTrabalhos, avaliacoes: abaAvaliacoes, loja: abaLoja })[aba]();
   }
 
   // ================= Pedidos (pesquisa estilo Google) =================
@@ -431,6 +431,43 @@
         trabalhos = trabalhos.filter(x => x.id !== id); mEditor.fechar(); LL.aviso('Trabalho apagado'); abaTrabalhos();
       }))));
     mEditor.abrir();
+  }
+
+  // ================= Avaliações e gostos =================
+  async function abaAvaliacoes() {
+    principal.replaceChildren(h('div', { class: 'text-body-secondary', text: 'A carregar avaliações…' }));
+    const [av, gt] = await Promise.all([sb.from('avaliacoes').select('*').order('criado', { ascending: false }).limit(500), sb.rpc('contar_gostos')]);
+    if (av.error) { principal.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(av.error) })); return; }
+    const lista = av.data, n = lista.length;
+    const media = n ? lista.reduce((s, a) => s + a.estrelas, 0) / n : 0, recom = n ? Math.round(lista.filter(a => a.recomenda).length / n * 100) : 0;
+    const gostos = {}; (gt.data || []).forEach(g => { gostos[g.trabalho_id] = Number(g.total); });
+    const kpi = (r, v, s) => h('div', { class: 'col-6 col-lg-3' }, h('div', { class: 'kpi' }, h('div', { class: 'rotulo', text: r }), h('div', { class: 'v', text: v }), h('div', { class: 'small text-body-secondary mt-1', text: s })));
+    const totalGostos = Object.values(gostos).reduce((s, x) => s + x, 0);
+    const maisGostados = trabalhos.slice().sort((a, b) => (gostos[b.id] || 0) - (gostos[a.id] || 0)).slice(0, 5);
+    principal.replaceChildren(
+      h('div', { class: 'row g-3 mb-4' }, kpi('Média', n ? media.toFixed(1).replace('.', ',') + ' ★' : '—', n + ' avaliações'), kpi('Recomendam', n ? recom + '%' : '—', lista.filter(a => a.recomenda).length + ' clientes'),
+        kpi('Por responder', String(lista.filter(a => !a.resposta).length), 'Avaliações sem resposta'), kpi('Gostos', String(totalGostos), 'Em ' + trabalhos.length + ' trabalhos')),
+      h('div', { class: 'row g-4' },
+        h('div', { class: 'col-lg-8 d-grid gap-3' }, n ? lista.map(a => {
+          const c = cliente(a.cliente_id);
+          const resp = h('textarea', { class: 'form-control', rows: '2', maxlength: '1000', id: 'resp-' + a.id, placeholder: 'Responder publicamente…' }); resp.value = a.resposta;
+          const msg = h('span', { class: 'small', role: 'status' });
+          const guardar = async dados => { const { error } = await sb.from('avaliacoes').update(dados).eq('id', a.id); if (error) { msg.className = 'small text-danger'; msg.textContent = LL.erro(error); return false; } Object.assign(a, dados); return true; };
+          return h('article', { class: 'card' + (a.visivel ? '' : ' opacity-75') }, h('div', { class: 'card-body d-grid gap-2' },
+            h('div', { class: 'd-flex gap-2 align-items-center flex-wrap' }, h('strong', { text: a.nome_publico }), h('span', { class: 'estrelas', text: '★★★★★'.slice(0, a.estrelas) + '☆☆☆☆☆'.slice(0, 5 - a.estrelas) }),
+              h('span', { class: 'badge ' + (a.recomenda ? 'text-bg-success' : 'text-bg-secondary'), text: a.recomenda ? 'Recomenda' : 'Não recomenda' }), a.visivel ? null : h('span', { class: 'badge text-bg-warning', text: 'Escondida' }),
+              h('span', { class: 'small text-body-secondary ms-auto', text: LL.data(a.criado) })),
+            h('div', { class: 'small text-body-secondary', text: (c.email || '') + ' · ' + a.servicos }),
+            a.comentario ? h('p', { class: 'mb-0', text: a.comentario }) : h('p', { class: 'mb-0 text-body-secondary fst-italic', text: 'Sem comentário.' }),
+            h('label', { class: 'visually-hidden', for: resp.id, text: 'Resposta' }), resp,
+            h('div', { class: 'd-flex gap-2 flex-wrap align-items-center' },
+              h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: async () => { if (await guardar({ resposta: resp.value.trim() })) { msg.className = 'small text-success'; msg.textContent = 'Resposta publicada.'; } }, text: 'Guardar resposta' }),
+              h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: async () => { if (await guardar({ visivel: !a.visivel })) abaAvaliacoes(); }, text: a.visivel ? 'Esconder da loja' : 'Mostrar na loja' }),
+              LL.confirmarBotao(h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', text: 'Apagar' }), 'Confirmar', async () => { const { error } = await sb.from('avaliacoes').delete().eq('id', a.id); if (error) { msg.textContent = LL.erro(error); return; } abaAvaliacoes(); }),
+              msg)));
+        }) : [h('div', { class: 'vazio', text: 'Ainda não há avaliações. Os clientes podem avaliar depois de libertar o projeto.' })]),
+        h('div', { class: 'col-lg-4' }, h('div', { class: 'card' }, h('div', { class: 'card-body' }, h('h2', { class: 'h6', text: 'Trabalhos com mais gostos' }),
+          maisGostados.length ? maisGostados.map(t => h('div', { class: 'd-flex justify-content-between gap-2 py-1 border-bottom small' }, h('span', { class: 'text-truncate', text: t.titulo }), h('span', { class: 'mono', text: '♥ ' + (gostos[t.id] || 0) }))) : h('p', { class: 'small text-body-secondary mb-0', text: 'Sem trabalhos publicados.' }))))));
   }
 
   // ================= Loja e métodos de pagamento =================

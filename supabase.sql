@@ -306,6 +306,74 @@ create policy "entregas: cliente vê só depois de libertado" on public.entregas
 drop policy if exists "entregas: admin gere" on public.entregas;
 create policy "entregas: admin gere" on public.entregas for all using (public.e_admin()) with check (public.e_admin());
 
+
+-- ---------- Avaliações (só de clientes com pedido concluído) ----------
+create table if not exists public.avaliacoes (
+  id uuid primary key default gen_random_uuid(),
+  pedido_id uuid not null unique references public.pedidos(id) on delete cascade,
+  cliente_id uuid not null default auth.uid() references public.perfis(id) on delete cascade,
+  nome_publico text not null default '',
+  servicos text not null default '',
+  estrelas int not null check (estrelas between 1 and 5),
+  recomenda boolean not null default true,
+  comentario text not null default '' check (char_length(comentario) <= 1000),
+  resposta text not null default '' check (char_length(resposta) <= 1000),
+  visivel boolean not null default true,
+  criado timestamptz not null default now()
+);
+alter table public.avaliacoes enable row level security;
+drop policy if exists "avaliacoes: leitura pública das visíveis" on public.avaliacoes;
+create policy "avaliacoes: leitura pública das visíveis" on public.avaliacoes for select using (visivel or cliente_id = auth.uid() or public.e_admin());
+drop policy if exists "avaliacoes: cliente avalia pedido concluído" on public.avaliacoes;
+create policy "avaliacoes: cliente avalia pedido concluído" on public.avaliacoes for insert to authenticated with check (
+  cliente_id = auth.uid() and exists (select 1 from public.pedidos p where p.id = pedido_id and p.cliente_id = auth.uid() and p.estado = 'concluido'));
+drop policy if exists "avaliacoes: editar a própria ou admin" on public.avaliacoes;
+create policy "avaliacoes: editar a própria ou admin" on public.avaliacoes for update using (cliente_id = auth.uid() or public.e_admin());
+drop policy if exists "avaliacoes: admin apaga" on public.avaliacoes;
+create policy "avaliacoes: admin apaga" on public.avaliacoes for delete using (public.e_admin());
+revoke update on public.avaliacoes from anon, authenticated;
+grant update (estrelas, recomenda, comentario, resposta, visivel) on public.avaliacoes to authenticated;
+
+-- Nome público (primeiro nome + inicial) e serviços preenchidos pelo servidor; o cliente não mexe na resposta nem na visibilidade
+create or replace function public.preparar_avaliacao() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare n text; partes text[];
+begin
+  if tg_op = 'INSERT' then
+    select nome into n from public.perfis where id = new.cliente_id;
+    partes := regexp_split_to_array(trim(coalesce(n, '')), '\s+');
+    new.nome_publico := coalesce(nullif(partes[1], ''), 'Cliente') || case when array_length(partes, 1) > 1 then ' ' || left(partes[array_length(partes, 1)], 1) || '.' else '' end;
+    select coalesce(string_agg(i->>'nome', ', '), '') into new.servicos from public.pedidos p, jsonb_array_elements(p.itens) i where p.id = new.pedido_id;
+    new.resposta := ''; new.visivel := true; new.criado := now();
+  elsif not public.e_admin() then
+    new.resposta := old.resposta; new.visivel := old.visivel;
+  end if;
+  return new;
+end $$;
+drop trigger if exists antes_de_avaliar on public.avaliacoes;
+create trigger antes_de_avaliar before insert or update on public.avaliacoes for each row execute function public.preparar_avaliacao();
+
+-- ---------- Gostos nos trabalhos ----------
+create table if not exists public.gostos (
+  trabalho_id uuid not null references public.trabalhos(id) on delete cascade,
+  cliente_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  criado timestamptz not null default now(),
+  primary key (trabalho_id, cliente_id)
+);
+alter table public.gostos enable row level security;
+drop policy if exists "gostos: ver os próprios" on public.gostos;
+create policy "gostos: ver os próprios" on public.gostos for select using (cliente_id = auth.uid());
+drop policy if exists "gostos: dar" on public.gostos;
+create policy "gostos: dar" on public.gostos for insert to authenticated with check (cliente_id = auth.uid());
+drop policy if exists "gostos: retirar" on public.gostos;
+create policy "gostos: retirar" on public.gostos for delete using (cliente_id = auth.uid());
+-- Contagens públicas sem revelar quem deu gosto
+create or replace function public.contar_gostos() returns table (trabalho_id uuid, total bigint)
+language sql stable security definer set search_path = public as $$
+  select trabalho_id, count(*) from public.gostos group by trabalho_id;
+$$;
+grant execute on function public.contar_gostos() to anon, authenticated;
+
 -- ---------- Armazenamento de ficheiros ----------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
   ('publico',  'publico',  true,  5242880,  array['image/jpeg','image/png','image/webp']),
