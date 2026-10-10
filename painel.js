@@ -77,7 +77,7 @@
   function renderTopo() {
     const totalNaoLidas = Object.values(naoLidasPor).reduce((s, n) => s + n, 0);
     const porVer = pedidos.filter(p => p.estado === 'pendente' || p.estado === 'comprovativo').length;
-    const abas = [['pedidos', 'Pedidos', porVer], ['conversas', 'Conversas', totalNaoLidas], ['clientes', 'Clientes'], ['catalogo', 'Serviços'], ['trabalhos', 'Trabalhos'], ['avaliacoes', 'Avaliações'], ['loja', 'Loja e pagamentos']];
+    const abas = [['pedidos', 'Pedidos', porVer], ['conversas', 'Conversas', totalNaoLidas], ['clientes', 'Clientes'], ['catalogo', 'Serviços'], ['trabalhos', 'Trabalhos'], ['avaliacoes', 'Avaliações'], ['cupoes', 'Cupões'], ['loja', 'Loja e pagamentos']];
     topo.replaceChildren(h('div', { class: 'container flex-wrap py-2' },
       h('a', { class: 'marca', href: 'index.html', target: '_blank', rel: 'noopener' }, LL.logo(), 'Painel'),
       h('ul', { class: 'nav nav-pills gap-1 flex-wrap ms-lg-3' }, abas.map(([a, t, n]) => h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (aba === a ? ' active' : ''), onclick: () => mudarAba(a) }, t, n ? h('span', { class: 'badge rounded-pill text-bg-danger ms-1', text: n }) : null)))),
@@ -85,7 +85,7 @@
   }
   function mudarAba(a) { if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; } aba = a; render(); }
   function renderConteudo() {
-    ({ pedidos: abaPedidos, conversas: abaConversas, clientes: abaClientes, catalogo: abaCatalogo, trabalhos: abaTrabalhos, avaliacoes: abaAvaliacoes, loja: abaLoja })[aba]();
+    ({ pedidos: abaPedidos, conversas: abaConversas, clientes: abaClientes, catalogo: abaCatalogo, trabalhos: abaTrabalhos, avaliacoes: abaAvaliacoes, cupoes: abaCupoes, loja: abaLoja })[aba]();
   }
 
   // ================= Pedidos (pesquisa estilo Google) =================
@@ -158,6 +158,22 @@
     };
     const botao = (t, cls, fn) => h('button', { class: 'btn ' + cls, type: 'button', onclick: fn, text: t });
     const nP = p.parcelas || 1, pagas = p.parcelas_pagas || 0;
+    // Progresso do projeto (o cliente vê a barra e recebe um aviso no chat)
+    const blocoProgresso = () => {
+      const pr = h('input', { type: 'range', class: 'form-range', min: '0', max: '100', step: '5', id: 'pd-prog' }); pr.value = p.progresso || 0;
+      const prTxt = h('span', { class: 'mono', text: (p.progresso || 0) + '%' }); pr.addEventListener('input', () => { prTxt.textContent = pr.value + '%'; });
+      const et = LL.campo('pd-etapa', 'Etapa atual', p.etapa, { max: '120', col: 'col-sm-7', ph: 'Ex.: Design aprovado, a programar' });
+      const pz = LL.campo('pd-prazo', 'Entrega prevista', p.prazo || '', { tipo: 'date', col: 'col-sm-5' });
+      return h('div', { class: 'caixa-suave rounded-3 p-3 d-grid gap-2' },
+        h('div', { class: 'd-flex justify-content-between' }, h('label', { class: 'form-label mb-0', for: 'pd-prog', text: 'Progresso do projeto' }), prTxt), pr,
+        h('div', { class: 'row g-2' }, et, pz),
+        h('div', null, botao('Atualizar progresso', 'btn-outline-primary btn-sm', async () => {
+          const { error } = await sb.from('pedidos').update({ progresso: Number(pr.value), etapa: et.campo.value.trim(), prazo: pz.campo.value || null }).eq('id', p.id);
+          if (error) { msg.className = 'small text-danger'; msg.textContent = LL.erro(error); return; }
+          Object.assign(p, { progresso: Number(pr.value), etapa: et.campo.value.trim(), prazo: pz.campo.value || null });
+          msg.className = 'small text-success'; msg.textContent = 'Progresso atualizado. O cliente foi avisado no chat.';
+        })));
+    };
     const confirmarPag = () => (nP > 1 && pagas + 1 < nP)
       ? botao('Confirmar prestação ' + (pagas + 1) + '/' + nP, 'btn-primary', () => mudarEstado('validado', { parcelas_pagas: pagas + 1 }))
       : botao(nP > 1 ? 'Confirmar última prestação' : 'Confirmar pagamento', 'btn-primary', () => mudarEstado('pago', { parcelas_pagas: nP }));
@@ -200,7 +216,7 @@
         h('div', { class: 'd-flex gap-2 flex-wrap' }, confirmarPag(), cancelar)],
       comprovativo: [nota, h('div', { class: 'd-flex gap-2 flex-wrap' }, confirmarPag(),
         botao('Recusar comprovativo', 'btn-outline-secondary', () => { if (!nota.campo.value.trim()) { msg.className = 'small text-danger'; msg.textContent = 'Escreva na nota o motivo da recusa.'; nota.campo.focus(); return; } mudarEstado('validado'); }), cancelar)],
-      pago: [h('div', null, h('label', { class: 'form-label', for: 'pd-ficheiros', text: 'Enviar ficheiros do projeto (até 50 MB cada)' }), ficheiros, h('div', { class: 'form-text', text: 'O cliente só consegue descarregar depois de libertar o projeto.' })), listaEnt, nota,
+      pago: [blocoProgresso(), h('div', null, h('label', { class: 'form-label', for: 'pd-ficheiros', text: 'Enviar ficheiros do projeto (até 50 MB cada)' }), ficheiros, h('div', { class: 'form-text', text: 'O cliente só consegue descarregar depois de libertar o projeto.' })), listaEnt, nota,
         h('div', { class: 'd-flex gap-2 flex-wrap' }, LL.confirmarBotao(h('button', { class: 'btn btn-primary', type: 'button', text: 'Libertar projeto ao cliente' }), 'Confirmar: libertar agora', () => {
           if (!entregas.length) { msg.className = 'small text-warning-emphasis'; msg.textContent = 'Sem ficheiros: o cliente será avisado de que o projeto está concluído.'; }
           mudarEstado('concluido');
@@ -468,6 +484,43 @@
         }) : [h('div', { class: 'vazio', text: 'Ainda não há avaliações. Os clientes podem avaliar depois de libertar o projeto.' })]),
         h('div', { class: 'col-lg-4' }, h('div', { class: 'card' }, h('div', { class: 'card-body' }, h('h2', { class: 'h6', text: 'Trabalhos com mais gostos' }),
           maisGostados.length ? maisGostados.map(t => h('div', { class: 'd-flex justify-content-between gap-2 py-1 border-bottom small' }, h('span', { class: 'text-truncate', text: t.titulo }), h('span', { class: 'mono', text: '♥ ' + (gostos[t.id] || 0) }))) : h('p', { class: 'small text-body-secondary mb-0', text: 'Sem trabalhos publicados.' }))))));
+  }
+
+  // ================= Cupões de desconto =================
+  async function abaCupoes() {
+    principal.replaceChildren(h('div', { class: 'text-body-secondary', text: 'A carregar…' }));
+    const { data, error } = await sb.from('cupoes').select('*').order('criado', { ascending: false });
+    if (error) { principal.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(error) })); return; }
+    const cod = LL.campo('cp-cod', 'Código', '', { max: '20', col: 'col-md-3', ph: 'Ex.: BEMVINDO10' });
+    const tipo = LL.campo('cp-tipo', 'Tipo', 'percentagem', { col: 'col-md-3', opcoes: [['percentagem', 'Percentagem (%)'], ['valor', 'Valor fixo (Kz)']] });
+    const val = LL.campo('cp-val', 'Valor', '', { tipo: 'number', min: '1', col: 'col-md-2' });
+    const min = LL.campo('cp-min', 'Compra mínima (Kz)', '0', { tipo: 'number', min: '0', step: '500', col: 'col-md-2' });
+    const usos = LL.campo('cp-usos', 'Usos máximos', '', { tipo: 'number', min: '1', col: 'col-md-2', ph: 'Ilimitado' });
+    const valid = LL.campo('cp-valid', 'Válido até', '', { tipo: 'date', col: 'col-md-3' });
+    const msg = h('div', { class: 'small', role: 'status' });
+    principal.replaceChildren(h('div', { class: 'd-grid gap-4' },
+      h('div', { class: 'card' }, h('form', { class: 'card-body row g-3', onsubmit: async e => {
+        e.preventDefault();
+        const c = cod.campo.value.trim().toUpperCase();
+        if (!/^[A-Z0-9_-]{3,20}$/.test(c)) { msg.className = 'small text-danger'; msg.textContent = 'O código deve ter 3 a 20 letras ou números, sem espaços.'; return; }
+        const v = Number(val.campo.value); if (!(v > 0) || (tipo.campo.value === 'percentagem' && v > 100)) { msg.className = 'small text-danger'; msg.textContent = 'Indique um valor válido (percentagem até 100).'; return; }
+        const { error } = await sb.from('cupoes').insert({ codigo: c, tipo: tipo.campo.value, valor: v, minimo: Number(min.campo.value) || 0, usos_max: usos.campo.value ? Number(usos.campo.value) : null, validade: valid.campo.value || null });
+        if (error) { msg.className = 'small text-danger'; msg.textContent = /duplicate/i.test(error.message) ? 'Já existe um cupão com este código.' : LL.erro(error); return; }
+        LL.aviso('Cupão ' + c + ' criado'); abaCupoes();
+      } }, h('h2', { class: 'h5 col-12 mb-0', text: 'Novo cupão' }), cod, tipo, val, min, usos, valid, h('div', { class: 'col-12' }, msg), h('div', { class: 'col-12' }, h('button', { class: 'btn btn-primary', type: 'submit', text: 'Criar cupão' })))),
+      data.length ? h('div', { class: 'tabela-wrap' }, h('table', { class: 'table align-middle' },
+        h('thead', null, h('tr', null, ['Código', 'Desconto', 'Mínimo', 'Usos', 'Validade', 'Estado', ''].map(t => h('th', { text: t })))),
+        h('tbody', null, data.map(c => {
+          const expirado = c.validade && new Date(c.validade + 'T23:59:59') < new Date(), esgotado = c.usos_max != null && c.usos >= c.usos_max;
+          return h('tr', null, h('td', { class: 'mono fw-semibold', text: c.codigo }), h('td', { text: c.tipo === 'percentagem' ? Number(c.valor) + '%' : LL.kz(c.valor) }),
+            h('td', { text: Number(c.minimo) ? LL.kz(c.minimo) : '—' }), h('td', { class: 'mono', text: c.usos + (c.usos_max != null ? ' / ' + c.usos_max : '') }),
+            h('td', { text: c.validade ? new Date(c.validade + 'T12:00:00').toLocaleDateString('pt-PT') : 'Sem limite' }),
+            h('td', null, h('span', { class: 'badge ' + (!c.ativo || expirado || esgotado ? 'text-bg-secondary' : 'text-bg-success'), text: !c.ativo ? 'Desligado' : expirado ? 'Expirado' : esgotado ? 'Esgotado' : 'Ativo' })),
+            h('td', { class: 'd-flex gap-1' },
+              h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', onclick: async () => { await sb.from('cupoes').update({ ativo: !c.ativo }).eq('codigo', c.codigo); abaCupoes(); }, text: c.ativo ? 'Desligar' : 'Ligar' }),
+              LL.confirmarBotao(h('button', { class: 'btn btn-sm btn-outline-danger', type: 'button', text: 'Apagar' }), 'Confirmar', async () => { await sb.from('cupoes').delete().eq('codigo', c.codigo); abaCupoes(); })));
+        }))))
+        : h('div', { class: 'vazio', text: 'Ainda não há cupões. Crie um para campanhas, clientes novos ou redes sociais.' })));
   }
 
   // ================= Loja e métodos de pagamento =================

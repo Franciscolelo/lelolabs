@@ -229,3 +229,6 @@ button.kpi:hover{border-color:var(--acento)}
 .btn-gosto:hover{border-color:#D6336C}
 .nota-produto{font-size:.85rem;color:var(--tinta)}
 .nota-produto:hover{text-decoration:underline!important}
+.isco{position:absolute!important;left:-9999px!important;width:1px;height:1px;opacity:0}
+.progress{--bs-progress-bar-bg:var(--acento);--bs-progress-bg:var(--superficie-2);height:10px}
+.rodape a{color:var(--suave)}

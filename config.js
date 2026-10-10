@@ -4,5 +4,7 @@
 // NUNCA coloque aqui a chave "service_role".
 window.LL_CONFIG = {
   SUPABASE_URL: 'https://cceyzebaybpdylitxsij.supabase.co',
-  SUPABASE_ANON_KEY: 'sb_publishable_dMsRdMExtibZXHXWQ5cMew_grgqmtF1'
+  SUPABASE_ANON_KEY: 'sb_publishable_dMsRdMExtibZXHXWQ5cMew_grgqmtF1',
+  // Opcional (anti-robôs): chave do Cloudflare Turnstile. Deixe vazio para desligar.
+  TURNSTILE_SITE_KEY: ''
 };

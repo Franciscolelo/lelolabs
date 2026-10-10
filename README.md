@@ -53,3 +53,7 @@ Site estático (GitHub Pages ou Vercel) ligado a uma base de dados **Supabase** 
 - 500 MB de base de dados e 1 GB de ficheiros; ficheiros de entrega até 50 MB cada.
 - O projeto entra em pausa após 7 dias sem visitas (reativa-se no painel do Supabase).
 - Os emails de confirmação do Supabase têm um limite baixo por hora. Para muitos clientes, configure um SMTP próprio em **Authentication → Emails → SMTP Settings**.
+
+## Proteção contra spam
+- Já ativo: campo invisível anti-robôs, limite de 5 pedidos por hora e de 20 mensagens por minuto por cliente.
+- Opcional (CAPTCHA): crie uma chave gratuita em dash.cloudflare.com → Turnstile. Ponha a **Site Key** em `config.js` (`TURNSTILE_SITE_KEY`) e a **Secret Key** no Supabase em **Authentication → Attack Protection → Enable CAPTCHA protection → Turnstile**.

@@ -38,6 +38,23 @@ window.LL = (function () {
   LL.icone = (n, t = 18) => h('span', { class: 'ico', 'aria-hidden': 'true', html: `<svg viewBox="0 0 24 24" width="${t}" height="${t}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${SVG[n] || ''}</svg>` });
   LL.logo = () => h('span', { class: 'logo', 'aria-hidden': 'true', html: '<svg viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="var(--acento)"/><path d="M16 14v36h18" stroke="var(--acento-tinta)" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M32 14v22h16" stroke="#F0B84A" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>' });
 
+  // ---------- Proteção contra robôs (Cloudflare Turnstile, opcional) ----------
+  // Ativa-se pondo TURNSTILE_SITE_KEY no config.js e ligando o CAPTCHA no Supabase (Authentication → Attack Protection).
+  let idCaptcha = null, tokenCap = '';
+  LL.captchaAtivo = () => !!cfg.TURNSTILE_SITE_KEY;
+  LL.tokenCaptcha = () => tokenCap;
+  LL.reiniciarCaptcha = () => { tokenCap = ''; try { if (idCaptcha != null) window.turnstile.reset(idCaptcha); } catch (e) { /* ignorar */ } };
+  LL.captcha = alvo => {
+    if (!LL.captchaAtivo()) return;
+    tokenCap = '';
+    const desenhar = () => { idCaptcha = window.turnstile.render(alvo, { sitekey: cfg.TURNSTILE_SITE_KEY, language: 'pt', callback: t => { tokenCap = t; }, 'expired-callback': () => { tokenCap = ''; } }); };
+    if (window.turnstile) { setTimeout(desenhar, 0); return; }
+    if (!document.getElementById('cf-turnstile')) {
+      const s = document.createElement('script'); s.id = 'cf-turnstile'; s.async = true;
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.onload = desenhar; document.head.append(s);
+    } else document.getElementById('cf-turnstile').addEventListener('load', desenhar);
+  };
+
   // ---------- Formatação ----------
   LL.kz = n => (n == null || n === '' || isNaN(n)) ? 'Sob consulta' : String(Math.round(Number(n))).replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ' Kz';
   LL.digitos = s => String(s || '').replace(/\D/g, '');

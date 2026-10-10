@@ -45,6 +45,8 @@
     document.title = loja.nome || 'LeloLabs';
     carrinho = carrinho.filter(i => produtos.some(x => x.id === i.id));
     renderTudo();
+    // Ligação direta para um serviço (partilhada nas redes)
+    const m = /^#servico-([0-9a-f-]{36})$/.exec(location.hash); if (m) { const p0 = produtos.find(x => x.id === m[1]); if (p0) abrirDetalhe(p0); }
   }
 
   sb.auth.onAuthStateChange((evento, s) => {
@@ -183,7 +185,9 @@
         a.resposta ? h('div', { class: 'resposta-aval small' }, h('strong', { text: 'Resposta: ' }), a.resposta) : null)));
   }
 
+  const linkServico = p => location.origin + location.pathname + '#servico-' + p.id;
   function abrirDetalhe(p, irParaAvaliacoes) {
+    try { history.replaceState(null, '', '#servico-' + p.id); } catch (e) { /* ignorar */ }
     mDetalhe.titulo(p.nome);
     mDetalhe.corpo.replaceChildren(h('div', { class: 'd-grid gap-3' },
       LL.galeria(p.imagens, p.nome, 'capa-grande'),
@@ -192,6 +196,10 @@
         h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: () => { adicionar(p.id); mDetalhe.fechar(); } }, LL.icone('carrinho'), ' Adicionar ao carrinho')),
       p.descricao ? h('p', { class: 'mb-0', text: p.descricao }) : null,
       (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.map(i => h('li', { text: i }))) : null,
+      h('div', { class: 'd-flex gap-2 flex-wrap' },
+        h('a', { class: 'btn btn-sm btn-outline-success', target: '_blank', rel: 'noopener', href: 'https://wa.me/?text=' + encodeURIComponent(p.nome + ' — ' + LL.kz(p.preco) + '\n' + linkServico(p)) }, 'Partilhar no WhatsApp'),
+        h('a', { class: 'btn btn-sm btn-outline-primary', target: '_blank', rel: 'noopener', href: 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(linkServico(p)) }, 'Facebook'),
+        (() => { const b = h('button', { class: 'btn btn-sm btn-outline-secondary', type: 'button', text: 'Copiar ligação' }); b.addEventListener('click', () => { navigator.clipboard.writeText(linkServico(p)).then(() => LL.aviso('Ligação copiada'), () => LL.aviso(linkServico(p))); }); return b; })()),
       h('div', { class: 'border-top pt-3' }, h('h3', { class: 'h5', text: 'Avaliações deste serviço' }), blocoAvaliacoesProduto(p))));
     mDetalhe.abrir();
     if (irParaAvaliacoes) setTimeout(() => { const el = document.getElementById('aval-produto'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }, 450);
@@ -282,7 +290,8 @@
   }
   function renderRodape() {
     rodape.replaceChildren(h('div', { class: 'container d-flex flex-wrap justify-content-between gap-2' },
-      h('span', { text: '© ' + new Date().getFullYear() + ' ' + (loja.nome || '') + ' · ' + (loja.dono || '') }), h('span', { text: loja.local || '' })));
+      h('span', { text: '© ' + new Date().getFullYear() + ' ' + (loja.nome || '') + ' · ' + (loja.dono || '') + ' · ' + (loja.local || '') }),
+      h('nav', { class: 'd-flex gap-3', 'aria-label': 'Informação legal' }, h('a', { href: 'termos.html', text: 'Termos de Uso' }), h('a', { href: 'termos.html#privacidade', text: 'Política de Privacidade' }))));
   }
 
   // ================= Carrinho =================
@@ -328,33 +337,44 @@
     const tel = LL.campo('au-tel', 'Telefone', '', { tipo: 'tel', max: '20', auto: 'tel', ph: '9XX XXX XXX', req: true });
     const senha = LL.campo('au-senha', 'Palavra-passe', '', { tipo: 'password', max: '72', auto: modo === 'registo' ? 'new-password' : 'current-password', req: true, ajuda: modo === 'registo' ? 'Pelo menos 8 caracteres.' : null });
     const botao = h('button', { class: 'btn btn-primary btn-lg', type: 'submit', text: modo === 'registo' ? 'Criar conta' : modo === 'recuperar' ? 'Enviar ligação' : 'Entrar' });
+    // Consentimento (Lei 22/11) e proteção contra robôs
+    const aceito = h('input', { class: 'form-check-input', type: 'checkbox', id: 'au-termos' });
+    const blocoTermos = modo === 'registo' ? h('div', { class: 'col-12 form-check ms-1' }, aceito, h('label', { class: 'form-check-label small', for: 'au-termos' },
+      'Li e aceito os ', h('a', { href: 'termos.html', target: '_blank', rel: 'noopener', text: 'Termos de Uso' }), ' e a ', h('a', { href: 'termos.html#privacidade', target: '_blank', rel: 'noopener', text: 'Política de Privacidade' }), '.')) : null;
+    const isco = h('input', { type: 'text', name: 'empresa_site', tabindex: '-1', autocomplete: 'off', class: 'isco', 'aria-hidden': 'true' });   // campo invisível: só robôs o preenchem
+    const zonaCaptcha = h('div', { class: 'col-12' });
+    const t0 = Date.now(); LL.captcha(zonaCaptcha);
     const form = h('form', { class: 'row g-3', novalidate: true, onsubmit: async e => {
       e.preventDefault(); erro.textContent = ''; ok.textContent = '';
       const em = email.campo.value.trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { erro.textContent = 'Escreva um email válido.'; return; }
+      if (isco.value || Date.now() - t0 < 2500) { erro.textContent = 'Não foi possível continuar. Tente outra vez.'; return; }
+      if (modo === 'registo' && !aceito.checked) { erro.textContent = 'Para criar conta, aceite os Termos de Uso e a Política de Privacidade.'; return; }
+      const captchaToken = LL.tokenCaptcha();
+      if (LL.captchaAtivo() && !captchaToken) { erro.textContent = 'Confirme que não é um robô.'; return; }
       botao.disabled = true;
       try {
         if (modo === 'recuperar') {
-          const { error } = await sb.auth.resetPasswordForEmail(em, { redirectTo: location.origin + location.pathname });
+          const { error } = await sb.auth.resetPasswordForEmail(em, { redirectTo: location.origin + location.pathname, captchaToken });
           if (error) throw error; ok.textContent = 'Se existir uma conta com este email, enviámos uma ligação para criar uma nova palavra-passe.';
         } else if (modo === 'registo') {
           if (nome.campo.value.trim().length < 3) throw new Error('Escreva o seu nome completo.');
           if (LL.digitos(tel.campo.value).length < 9) throw new Error('Escreva um telefone com 9 algarismos.');
           if (senha.campo.value.length < 8) throw new Error('A palavra-passe tem de ter pelo menos 8 caracteres.');
-          const { data, error } = await sb.auth.signUp({ email: em, password: senha.campo.value, options: { data: { nome: nome.campo.value.trim(), telefone: LL.digitos(tel.campo.value) }, emailRedirectTo: location.origin + location.pathname } });
+          const { data, error } = await sb.auth.signUp({ email: em, password: senha.campo.value, options: { captchaToken, data: { nome: nome.campo.value.trim(), telefone: LL.digitos(tel.campo.value), aceitou_termos: new Date().toISOString() }, emailRedirectTo: location.origin + location.pathname } });
           if (error) throw error;
           if (!data.session) { form.replaceChildren(h('div', { class: 'col-12 text-center d-grid gap-2 py-3' }, LL.icone('email', 40), h('h3', { class: 'h5', text: 'Confirme o seu email' }), h('p', { class: 'mb-0', text: 'Enviámos uma mensagem para ' + em + '. Abra a ligação para ativar a conta e depois entre.' }))); return; }
           mAuth.fechar(); LL.aviso('Conta criada. Bem-vindo!');
         } else {
-          const { error } = await sb.auth.signInWithPassword({ email: em, password: senha.campo.value });
+          const { error } = await sb.auth.signInWithPassword({ email: em, password: senha.campo.value, options: { captchaToken } });
           if (error) throw error;
           mAuth.fechar(); LL.aviso('Sessão iniciada');
         }
-      } catch (er) { erro.textContent = LL.erro(er); }
+      } catch (er) { erro.textContent = LL.erro(er); LL.reiniciarCaptcha(); }
       botao.disabled = false;
     } },
-      modo === 'registo' ? nome : null, email, modo === 'registo' ? tel : null, modo !== 'recuperar' ? senha : null,
-      h('div', { class: 'col-12' }, erro, ok), h('div', { class: 'col-12 d-grid' }, botao),
+      isco, modo === 'registo' ? nome : null, email, modo === 'registo' ? tel : null, modo !== 'recuperar' ? senha : null,
+      blocoTermos, zonaCaptcha, h('div', { class: 'col-12' }, erro, ok), h('div', { class: 'col-12 d-grid' }, botao),
       h('div', { class: 'col-12 text-center small' }, modo === 'recuperar'
         ? h('button', { class: 'btn btn-link btn-sm', type: 'button', onclick: () => abrirAuth('entrar'), text: '← Voltar a entrar' })
         : modo === 'entrar' ? h('button', { class: 'btn btn-link btn-sm', type: 'button', onclick: () => abrirAuth('recuperar'), text: 'Esqueci-me da palavra-passe' }) : null));
@@ -392,6 +412,21 @@
     const notas = LL.campo('pd-notas', 'Descreva o que precisa (opcional)', '', { area: true, max: '1000', ph: 'Ex.: quero o site com as cores da minha empresa e pronto até ao fim do mês.' });
     const erro = h('div', { class: 'small text-danger', role: 'alert' });
     const botao = h('button', { class: 'btn btn-primary btn-lg', type: 'submit', text: 'Enviar pedido' });
+    // Cupão de desconto (validado no servidor)
+    let cupao = '', descCupao = 0;
+    const cupaoIn = h('input', { class: 'form-control text-uppercase', id: 'pd-cupao', maxlength: '20', placeholder: 'Código', autocomplete: 'off' });
+    const cupaoMsg = h('div', { class: 'small', role: 'status' });
+    const totalTxt = h('span', { text: LL.kz(r.total) + (r.consulta ? ' + sob consulta' : '') });
+    const blocoCupao = h('div', null, h('label', { class: 'form-label', for: 'pd-cupao', text: 'Tem um cupão de desconto?' }),
+      h('div', { class: 'input-group', style: 'max-width:360px' }, cupaoIn, h('button', { class: 'btn btn-outline-primary', type: 'button', onclick: async () => {
+        const cod = cupaoIn.value.trim().toUpperCase(); if (!cod) return;
+        const { data, error } = await sb.rpc('validar_cupao', { cod, subtotal: r.total });
+        if (error || !data) { cupaoMsg.className = 'small text-danger'; cupaoMsg.textContent = LL.erro(error); return; }
+        if (!data.ok) { cupao = ''; descCupao = 0; cupaoMsg.className = 'small text-danger'; cupaoMsg.textContent = data.motivo; totalTxt.textContent = LL.kz(r.total); return; }
+        cupao = cod; descCupao = Number(data.desconto);
+        cupaoMsg.className = 'small text-success'; cupaoMsg.textContent = 'Cupão aplicado: −' + LL.kz(descCupao);
+        totalTxt.textContent = LL.kz(r.total - descCupao) + (r.consulta ? ' + sob consulta' : '');
+      }, text: 'Aplicar' })), cupaoMsg);
     // Parcelamento: só a partir de 1.000 Kz (o servidor confirma esta regra)
     let parcelas = 1;
     const blocoParcelas = r.total >= 1000
@@ -405,7 +440,7 @@
       : h('div', { class: 'small text-body-secondary', text: 'Valores abaixo de 1.000 Kz são pagos de uma só vez, sem parcelamento.' });
     mPedido.corpo.replaceChildren(h('form', { class: 'd-grid gap-3', onsubmit: async e => {
       e.preventDefault(); erro.textContent = ''; botao.disabled = true;
-      const { data, error } = await sb.from('pedidos').insert({ itens: carrinho.map(i => ({ id: i.id, qtd: i.qtd })), notas: notas.campo.value.trim(), metodo_pagamento: escolhido, parcelas }).select().single();
+      const { data, error } = await sb.from('pedidos').insert({ itens: carrinho.map(i => ({ id: i.id, qtd: i.qtd })), notas: notas.campo.value.trim(), metodo_pagamento: escolhido, parcelas, cupao }).select().single();
       botao.disabled = false;
       if (error) { erro.textContent = LL.erro(error); return; }
       carrinho = []; guardarCarrinho(); mPedido.fechar();
@@ -414,14 +449,14 @@
     } },
       h('div', { class: 'p-3 rounded-3 caixa-suave' },
         r.linhas.map(l => h('div', { class: 'd-flex justify-content-between gap-2 small' }, h('span', { text: l.qtd + ' × ' + l.nome }), h('span', { class: 'mono', text: l.preco == null ? 'sob consulta' : LL.kz(l.preco * l.qtd) }))),
-        h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total' }), h('span', { text: LL.kz(r.total) + (r.consulta ? ' + sob consulta' : '') }))),
+        h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total' }), totalTxt)),
       h('div', { class: 'small text-body-secondary', text: 'Pedido em nome de ' + (perfil.nome || perfil.email) + ' · ' + perfil.email }),
       metodos.length ? h('fieldset', null, h('legend', { class: 'form-label fs-6', text: 'Como vai pagar?' }), h('div', { class: 'row g-2' }, metodos.map((m, i) => {
         const r2 = h('input', { type: 'radio', name: 'pd-metodo', id: 'pd-m-' + i, value: m.nome }); r2.checked = m.nome === escolhido;
         r2.addEventListener('change', () => { escolhido = m.nome; mostrarDetalhes(); });
         return h('div', { class: 'col-sm-6' }, h('label', { class: 'opcao-canal', for: 'pd-m-' + i }, r2, h('span', { class: 'fw-semibold', text: m.nome })));
       })), h('div', { class: 'mt-2' }, h('div', { class: 'form-text mb-1', text: 'Dados para pagamento (pague só depois de o pedido ser validado):' }), detalhes)) : null,
-      blocoParcelas, notas, erro,
+      blocoCupao, blocoParcelas, notas, erro,
       h('p', { class: 'small text-body-secondary mb-0', text: 'Primeiro valido o pedido e confirmo o valor final. Depois paga e envia o comprovativo aqui no site.' }),
       h('div', { class: 'd-flex justify-content-end gap-2' }, h('button', { class: 'btn btn-outline-secondary', type: 'button', 'data-bs-dismiss': 'modal', text: 'Voltar' }), botao)));
     mostrarDetalhes(); mPedido.abrir();
@@ -431,7 +466,7 @@
   async function abrirConta(aba) {
     if (!sessao) { abrirAuth('entrar', () => abrirConta(aba)); return; }
     if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; }
-    const abas = [['pedidos', 'Pedidos'], ['conversa', 'Conversa' + (naoLidas ? ' (' + naoLidas + ')' : '')], ['dados', 'Os meus dados']];
+    const abas = [['pedidos', 'Pedidos'], ['historico', 'Histórico e comprovativos'], ['conversa', 'Conversa' + (naoLidas ? ' (' + naoLidas + ')' : '')], ['dados', 'Os meus dados']];
     const conteudo = h('div', { class: 'pt-3' });
     mConta.titulo('Olá, ' + ((perfil && perfil.nome.split(' ')[0]) || 'cliente'));
     mConta.corpo.replaceChildren(h('ul', { class: 'nav nav-pills gap-1' }, abas.map(([a, t]) => h('li', { class: 'nav-item' }, h('button', { type: 'button', class: 'nav-link' + (aba === a ? ' active' : ''), onclick: () => abrirConta(a) }, t)))), conteudo);
@@ -442,6 +477,7 @@
       conteudo.replaceChildren(h('p', { class: 'small text-body-secondary', text: 'Fale diretamente comigo. Pode anexar imagens ou PDF (até 10 MB).' }), chatAtivo.el);
       setTimeout(() => chatAtivo && chatAtivo.focar(), 400);
     } else if (aba === 'dados') contaDados(conteudo);
+    else if (aba === 'historico') contaHistorico(conteudo);
     else contaPedidos(conteudo);
   }
 
@@ -480,6 +516,11 @@
     return h('article', { class: 'card' }, h('div', { class: 'card-body d-grid gap-3' },
       h('div', { class: 'd-flex flex-wrap align-items-center gap-2' }, h('strong', { class: 'mono', text: p.codigo }), LL.selo(p.estado), h('span', { class: 'small text-body-secondary ms-auto', text: LL.data(p.criado) })),
       LL.linhaTempo(p.estado),
+      p.estado === 'pago' ? h('div', { class: 'd-grid gap-1' },
+        h('div', { class: 'd-flex justify-content-between small' }, h('span', { class: 'fw-semibold', text: 'Progresso do projeto' + (p.etapa ? ': ' + p.etapa : '') }), h('span', { class: 'mono', text: (p.progresso || 0) + '%' })),
+        h('div', { class: 'progress', role: 'progressbar', 'aria-valuenow': String(p.progresso || 0), 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-label': 'Progresso' }, h('div', { class: 'progress-bar', style: 'width:' + (p.progresso || 0) + '%' })),
+        p.prazo ? h('div', { class: 'small text-body-secondary', text: 'Entrega prevista: ' + new Date(p.prazo + 'T12:00:00').toLocaleDateString('pt-PT') }) : null) : null,
+      p.cupao ? h('div', { class: 'small text-success', text: 'Cupão ' + p.cupao + ' aplicado' }) : null,
       h('div', { class: 'small' }, p.itens.map(i => h('div', { class: 'd-flex justify-content-between gap-2' }, h('span', { text: i.qtd + ' × ' + i.nome }), h('span', { class: 'mono', text: i.preco == null ? 'sob consulta' : LL.kz(i.preco * i.qtd) }))),
         h('div', { class: 'total-linha border-top mt-2 pt-2' }, h('span', { text: 'Total a pagar' }), h('span', { text: LL.kz(p.total) + (p.tem_consulta && p.estado === 'pendente' ? ' + sob consulta' : '') }))),
       Number(p.desconto) > 0 ? h('div', { class: 'small text-success fw-semibold', text: 'Desconto aplicado: ' + LL.kz(p.desconto) }) : null,
@@ -499,6 +540,57 @@
       h('div', null, h('button', { class: 'btn btn-link btn-sm px-0', type: 'button', onclick: () => { abrirConta.texto = 'Sobre o pedido ' + p.codigo + ': '; abrirConta('conversa'); } }, LL.icone('chat', 14), ' Falar sobre este pedido'))));
   }
 
+  // ================= Histórico e comprovativos de compra =================
+  async function contaHistorico(c) {
+    c.replaceChildren(h('div', { class: 'small text-body-secondary', text: 'A carregar…' }));
+    const uid = sessao.user.id;
+    const [pg, pd] = await Promise.all([
+      sb.from('pagamentos').select('*').eq('cliente_id', uid).order('criado', { ascending: false }),
+      sb.from('pedidos').select('*').eq('cliente_id', uid).order('criado', { ascending: false })]);
+    if (pg.error || pd.error) { c.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(pg.error || pd.error) })); return; }
+    const pedidosPorId = {}; pd.data.forEach(p => { pedidosPorId[p.id] = p; });
+    const totalPago = pg.data.reduce((s, x) => s + Number(x.valor), 0);
+    const emDivida = pd.data.filter(p => p.estado === 'validado' || p.estado === 'comprovativo').reduce((s, p) => s + Number(p.total) - pg.data.filter(x => x.pedido_id === p.id).reduce((a, x) => a + Number(x.valor), 0), 0);
+    const kpi = (r, v) => h('div', { class: 'col-6 col-md-3' }, h('div', { class: 'kpi' }, h('div', { class: 'rotulo', text: r }), h('div', { class: 'v', text: v })));
+    c.replaceChildren(h('div', { class: 'd-grid gap-3' },
+      h('div', { class: 'row g-3' }, kpi('Pedidos', String(pd.data.length)), kpi('Concluídos', String(pd.data.filter(p => p.estado === 'concluido').length)), kpi('Total pago', LL.kz(totalPago)), kpi('Por pagar', LL.kz(Math.max(0, emDivida)))),
+      h('h3', { class: 'h6 mb-0 mt-2', text: 'Pagamentos confirmados' }),
+      pg.data.length ? h('div', { class: 'tabela-wrap' }, h('table', { class: 'table align-middle mb-0' },
+        h('thead', null, h('tr', null, ['Data', 'Comprovativo', 'Pedido', 'Prestação', 'Valor', ''].map((t, i) => h('th', { class: i === 4 ? 'num' : '', text: t })))),
+        h('tbody', null, pg.data.map(x => h('tr', null,
+          h('td', { class: 'small mono', text: LL.data(x.criado) }), h('td', { class: 'mono', text: x.numero }), h('td', { class: 'mono', text: (pedidosPorId[x.pedido_id] || {}).codigo || '—' }),
+          h('td', { text: x.de > 1 ? x.prestacao + ' de ' + x.de : 'Única' }), h('td', { class: 'num mono', text: LL.kz(x.valor) }),
+          h('td', null, h('button', { class: 'btn btn-sm btn-outline-primary', type: 'button', onclick: () => comprovativoCompra(x, pedidosPorId[x.pedido_id]), text: 'Ver comprovativo' }))))))) 
+        : h('div', { class: 'vazio', text: 'Ainda não há pagamentos confirmados. Os comprovativos aparecem aqui assim que eu confirmar cada pagamento.' }),
+      h('h3', { class: 'h6 mb-0 mt-2', text: 'Todos os pedidos' }),
+      pd.data.length ? h('div', { class: 'list-group' }, pd.data.map(p => h('div', { class: 'list-group-item d-flex flex-wrap gap-2 align-items-center' },
+        h('span', { class: 'mono fw-semibold', text: p.codigo }), LL.selo(p.estado), h('span', { class: 'small text-body-secondary', text: LL.data(p.criado) }),
+        h('span', { class: 'small text-truncate', style: 'max-width:260px', text: p.itens.map(i => i.nome).join(', ') }), h('span', { class: 'ms-auto mono fw-semibold', text: LL.kz(p.total) })))) : h('div', { class: 'vazio', text: 'Ainda não fez nenhum pedido.' })));
+  }
+
+  // Comprovativo de compra (recibo simples, não é fatura fiscal) — abre numa janela própria para imprimir ou guardar em PDF
+  function comprovativoCompra(pag, ped) {
+    ped = ped || { codigo: '—', itens: [], total: pag.valor, desconto: 0 };
+    const esc = t => String(t == null ? '' : t).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const linhas = ped.itens.map(i => '<tr><td>' + i.qtd + ' × ' + esc(i.nome) + '</td><td class="n">' + (i.preco == null ? 'consulta' : esc(LL.kz(i.preco * i.qtd))) + '</td></tr>').join('');
+    const html = '<!doctype html><html lang="pt"><head><meta charset="utf-8"><title>Comprovativo ' + esc(pag.numero) + '</title><style>'
+      + 'body{font:14px/1.5 system-ui,sans-serif;color:#0F201C;max-width:640px;margin:24px auto;padding:0 16px}h1{font-size:20px;margin:0}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:6px 0;border-bottom:1px solid #ddd;text-align:left}.n{text-align:right;font-variant-numeric:tabular-nums}'
+      + '.cab{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0E7666;padding-bottom:12px;margin-bottom:12px}.tot{font-size:18px;font-weight:700}.nota{font-size:12px;color:#53645E;margin-top:24px}.selo{display:inline-block;border:2px solid #1B7A3E;color:#1B7A3E;font-weight:700;padding:4px 10px;border-radius:6px;transform:rotate(-4deg)}button{margin-top:16px;padding:10px 16px;font:inherit;background:#0E7666;color:#fff;border:0;border-radius:8px;cursor:pointer}@media print{button{display:none}}'
+      + '</style></head><body><div class="cab"><div><h1>' + esc(loja.nome || 'LeloLabs') + '</h1><div>' + esc(loja.dono || '') + '</div><div>' + esc(loja.local || '') + '</div><div>' + esc(loja.email || '') + (loja.telefone ? ' · ' + esc(LL.tel(loja.telefone)) : '') + '</div></div>'
+      + '<div style="text-align:right"><strong>COMPROVATIVO DE PAGAMENTO</strong><div>N.º ' + esc(pag.numero) + '</div><div>' + esc(LL.data(pag.criado)) + '</div></div></div>'
+      + '<p><strong>Cliente:</strong> ' + esc(perfil.nome) + '<br><strong>Email:</strong> ' + esc(perfil.email) + (perfil.telefone ? '<br><strong>Telefone:</strong> ' + esc(LL.tel(perfil.telefone)) : '') + '</p>'
+      + '<p><strong>Pedido:</strong> ' + esc(ped.codigo) + '</p><table><thead><tr><th>Serviço</th><th class="n">Valor</th></tr></thead><tbody>' + linhas + '</tbody></table>'
+      + (Number(ped.desconto) > 0 ? '<p class="n">Desconto: −' + esc(LL.kz(ped.desconto)) + '</p>' : '')
+      + '<p class="n">Total do pedido: ' + esc(LL.kz(ped.total)) + '</p>'
+      + '<p class="n">Pagamento: ' + (pag.de > 1 ? 'prestação ' + pag.prestacao + ' de ' + pag.de : 'pagamento único') + (pag.metodo ? ' · ' + esc(pag.metodo) : '') + '</p>'
+      + '<p class="n tot">Valor recebido: ' + esc(LL.kz(pag.valor)) + '</p><p><span class="selo">PAGO</span></p>'
+      + '<p class="nota">Este documento comprova o pagamento recebido e não substitui fatura. Verificação: ' + esc(pag.numero) + '.</p>'
+      + '<button onclick="window.print()">Imprimir / Guardar em PDF</button></body></html>';
+    const w = window.open('', '_blank');
+    if (!w) { LL.aviso('Permita janelas pop-up para ver o comprovativo.', 'erro'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  }
+
   function contaDados(c) {
     const nome = LL.campo('cd-nome', 'Nome', perfil.nome, { max: '80', auto: 'name', col: 'col-md-6' });
     const tel = LL.campo('cd-tel', 'Telefone', perfil.telefone, { tipo: 'tel', max: '20', auto: 'tel', col: 'col-md-6' });
@@ -514,7 +606,10 @@
       h('div', { class: 'col-12' }, h('div', { class: 'form-label', text: 'Email' }), h('div', { class: 'mono', text: perfil.email }), h('div', { class: 'form-text', text: 'É para este email que envio avisos sobre os seus projetos.' })),
       h('div', { class: 'col-12' }, msg),
       h('div', { class: 'col-12 d-flex gap-2 flex-wrap' }, h('button', { class: 'btn btn-primary', type: 'submit', text: 'Guardar' }),
-        h('button', { class: 'btn btn-outline-danger ms-auto', type: 'button', onclick: async () => { await sb.auth.signOut(); mConta.fechar(); LL.aviso('Sessão terminada'); }, text: 'Terminar sessão' }))));
+        h('button', { class: 'btn btn-outline-danger ms-auto', type: 'button', onclick: async () => { await sb.auth.signOut(); mConta.fechar(); LL.aviso('Sessão terminada'); }, text: 'Terminar sessão' })),
+      h('div', { class: 'col-12 border-top pt-3 small text-body-secondary' }, 'Os seus direitos: pode consultar, corrigir ou pedir a eliminação dos seus dados (',
+        h('a', { href: 'termos.html#privacidade', target: '_blank', rel: 'noopener', text: 'Política de Privacidade' }), '). ',
+        h('button', { class: 'btn btn-link btn-sm p-0 align-baseline', type: 'button', onclick: () => { abrirConta.texto = 'Peço a eliminação da minha conta e dos meus dados pessoais.'; abrirConta('conversa'); }, text: 'Pedir eliminação da conta' }))));
   }
 
   carregar();

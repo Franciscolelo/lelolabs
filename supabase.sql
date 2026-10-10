@@ -34,14 +34,17 @@ create policy "perfis: editar o próprio" on public.perfis for update using (id 
 revoke update on public.perfis from anon, authenticated;
 grant update (nome, telefone) on public.perfis to authenticated;   -- o email não pode ser alterado pelo cliente
 
+alter table public.perfis add column if not exists aceitou_termos timestamptz;   -- prova de consentimento (Lei 22/11)
+
 create or replace function public.novo_perfil() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  insert into public.perfis (id, nome, email, telefone)
+  insert into public.perfis (id, nome, email, telefone, aceitou_termos)
   values (new.id,
           left(coalesce(new.raw_user_meta_data->>'nome', ''), 80),
           coalesce(new.email, ''),
-          left(coalesce(new.raw_user_meta_data->>'telefone', ''), 20))
+          left(coalesce(new.raw_user_meta_data->>'telefone', ''), 20),
+          case when new.raw_user_meta_data ? 'aceitou_termos' then now() else null end)
   on conflict (id) do nothing;
   return new;
 end $$;
@@ -148,6 +151,53 @@ alter table public.pedidos add column if not exists parcelas int not null defaul
 alter table public.pedidos drop constraint if exists pedidos_parcelas_check;
 alter table public.pedidos add constraint pedidos_parcelas_check check (parcelas between 1 and 3);   -- máximo 3 prestações
 alter table public.pedidos add column if not exists desconto numeric(14,2) not null default 0 check (desconto >= 0);
+alter table public.pedidos add column if not exists cupao text not null default '';
+alter table public.pedidos add column if not exists progresso int not null default 0 check (progresso between 0 and 100);
+alter table public.pedidos add column if not exists etapa text not null default '' check (char_length(etapa) <= 120);
+alter table public.pedidos add column if not exists prazo date;
+
+-- ---------- Cupões de desconto ----------
+create table if not exists public.cupoes (
+  codigo text primary key check (codigo ~ '^[A-Z0-9_-]{3,20}$'),
+  tipo text not null default 'percentagem' check (tipo in ('percentagem','valor')),
+  valor numeric(14,2) not null check (valor > 0),
+  minimo numeric(14,2) not null default 0,
+  validade date,
+  usos_max int,
+  usos int not null default 0,
+  ativo boolean not null default true,
+  criado timestamptz not null default now()
+);
+alter table public.cupoes enable row level security;
+drop policy if exists "cupoes: admin gere" on public.cupoes;
+create policy "cupoes: admin gere" on public.cupoes for all using (public.e_admin()) with check (public.e_admin());
+
+-- O cliente só consegue verificar um código (não consegue listar os cupões)
+create or replace function public.calcular_cupao(cod text, subtotal numeric) returns numeric
+language plpgsql stable security definer set search_path = public as $$
+declare c record;
+begin
+  select * into c from public.cupoes where codigo = upper(trim(cod)) and ativo
+    and (validade is null or validade >= current_date) and (usos_max is null or usos < usos_max);
+  if not found or subtotal < c.minimo then return null; end if;
+  return least(subtotal, round(case when c.tipo = 'percentagem' then subtotal * least(c.valor, 100) / 100 else c.valor end));
+end $$;
+create or replace function public.validar_cupao(cod text, subtotal numeric) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare d numeric; c record;
+begin
+  d := public.calcular_cupao(cod, subtotal);
+  if d is null then
+    select * into c from public.cupoes where codigo = upper(trim(cod));
+    if found and c.ativo and subtotal < c.minimo then
+      return jsonb_build_object('ok', false, 'motivo', 'Este cupão é válido a partir de ' || replace(to_char(c.minimo, 'FM999,999,999,990'), ',', '.') || ' Kz.');
+    end if;
+    return jsonb_build_object('ok', false, 'motivo', 'Cupão inválido ou expirado.');
+  end if;
+  return jsonb_build_object('ok', true, 'desconto', d);
+end $$;
+grant execute on function public.validar_cupao(text, numeric) to authenticated;
+revoke execute on function public.calcular_cupao(text, numeric) from anon, authenticated;
 alter table public.pedidos add column if not exists parcelas_pagas int not null default 0 check (parcelas_pagas >= 0);
 alter table public.pedidos enable row level security;
 drop policy if exists "pedidos: ver os próprios ou admin" on public.pedidos;
@@ -184,9 +234,20 @@ begin
   new.total := soma;
   new.tem_consulta := consulta;
   -- Abaixo de 1.000 Kz não há parcelamento; acima, até 3 prestações.
-  new.parcelas := case when soma >= 1000 then greatest(1, least(3, coalesce(new.parcelas, 1))) else 1 end;
-  new.parcelas_pagas := 0;
+  -- Anti-spam: no máximo 5 pedidos por hora por cliente
+  if (select count(*) from public.pedidos where cliente_id = auth.uid() and criado > now() - interval '1 hour') >= 5 then
+    raise exception 'Fez muitos pedidos seguidos. Aguarde um pouco ou fale comigo pelo chat.';
+  end if;
   new.desconto := 0;
+  new.cupao := upper(trim(coalesce(new.cupao, '')));
+  if new.cupao <> '' then
+    new.desconto := coalesce(public.calcular_cupao(new.cupao, soma), 0);
+    if new.desconto = 0 then new.cupao := ''; else update public.cupoes set usos = usos + 1 where codigo = new.cupao; end if;
+    soma := soma - new.desconto;
+    new.total := soma;
+  end if;
+  new.parcelas := case when soma >= 1000 then greatest(1, least(3, coalesce(new.parcelas, 1))) else 1 end;
+  new.parcelas_pagas := 0; new.progresso := 0; new.etapa := ''; new.prazo := null;
   new.codigo := 'LL-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
   new.criado := now();
   new.atualizado := now();
@@ -258,6 +319,10 @@ begin
   v := replace(to_char(new.total, 'FM999,999,999,990'), ',', '.') || ' Kz';
   if tg_op = 'INSERT' then
     t := 'Recebi o seu pedido ' || new.codigo || '. Vou analisá-lo e responder em breve.';
+  elsif new.estado = 'pago' and old.estado = 'pago' and (new.progresso is distinct from old.progresso or new.etapa is distinct from old.etapa or new.prazo is distinct from old.prazo) then
+    t := 'Progresso do pedido ' || new.codigo || ': ' || new.progresso || '%'
+      || case when new.etapa <> '' then ' — ' || new.etapa else '' end
+      || case when new.prazo is not null then '. Entrega prevista: ' || to_char(new.prazo, 'DD/MM/YYYY') else '' end || '.';
   elsif new.parcelas_pagas > old.parcelas_pagas and new.estado = 'validado' then
     t := 'Prestação ' || new.parcelas_pagas || '/' || new.parcelas || ' do pedido ' || new.codigo || ' confirmada. Obrigado! '
       || 'Quando pagar a próxima, envie o comprovativo na página do pedido.';
@@ -382,6 +447,55 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function public.contar_gostos() to anon, authenticated;
 
+
+-- ---------- Pagamentos (histórico e comprovativos de compra) ----------
+create table if not exists public.pagamentos (
+  id bigint generated always as identity primary key,
+  numero text not null unique,
+  pedido_id uuid not null references public.pedidos(id) on delete cascade,
+  cliente_id uuid not null references public.perfis(id) on delete cascade,
+  prestacao int not null default 1,
+  de int not null default 1,
+  valor numeric(14,2) not null,
+  metodo text not null default '',
+  criado timestamptz not null default now()
+);
+alter table public.pagamentos enable row level security;
+drop policy if exists "pagamentos: ver os próprios ou admin" on public.pagamentos;
+create policy "pagamentos: ver os próprios ou admin" on public.pagamentos for select using (cliente_id = auth.uid() or public.e_admin());
+
+-- Cada prestação confirmada gera um registo de pagamento (com número de comprovativo)
+create or replace function public.registar_pagamentos() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare k int; v numeric; base numeric;
+begin
+  if new.parcelas_pagas > old.parcelas_pagas then
+    base := ceil(new.total / new.parcelas);
+    for k in (old.parcelas_pagas + 1)..new.parcelas_pagas loop
+      v := case when k = new.parcelas then new.total - base * (new.parcelas - 1) else base end;
+      insert into public.pagamentos (numero, pedido_id, cliente_id, prestacao, de, valor, metodo)
+      values (new.codigo || '-' || k, new.id, new.cliente_id, k, new.parcelas, greatest(v, 0), new.metodo_pagamento)
+      on conflict (numero) do nothing;
+    end loop;
+  end if;
+  return null;
+end $$;
+drop trigger if exists depois_de_pagar on public.pedidos;
+create trigger depois_de_pagar after update on public.pedidos for each row execute function public.registar_pagamentos();
+
+-- ---------- Anti-spam no chat: no máximo 20 mensagens por minuto por cliente ----------
+create or replace function public.limitar_mensagens() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.autor = 'cliente' and (select count(*) from public.mensagens
+      where cliente_id = new.cliente_id and autor = 'cliente' and criado > now() - interval '1 minute') >= 20 then
+    raise exception 'Está a enviar mensagens muito depressa. Aguarde um minuto.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists antes_de_mensagem on public.mensagens;
+create trigger antes_de_mensagem before insert on public.mensagens for each row execute function public.limitar_mensagens();
+
 -- ---------- Armazenamento de ficheiros ----------
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values
   ('publico',  'publico',  true,  5242880,  array['image/jpeg','image/png','image/webp']),
@@ -453,4 +567,5 @@ end $$;
 -- =====================================================================
 
 -- Atualiza a API do Supabase com as colunas novas
+do $$ begin alter publication supabase_realtime add table public.pagamentos; exception when duplicate_object then null; end $$;
 notify pgrst, 'reload schema';
