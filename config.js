@@ -4,5 +4,5 @@
 // NUNCA coloque aqui a chave "service_role".
 window.LL_CONFIG = {
   SUPABASE_URL: 'https://cceyzebaybpdylitxsij.supabase.co',
-  SUPABASE_ANON_KEY: 'COLE_AQUI_A_CHAVE_ANON'
+  SUPABASE_ANON_KEY: 'sb_publishable_dMsRdMExtibZXHXWQ5cMew_grgqmtF1'
 };
