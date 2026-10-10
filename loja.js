@@ -44,7 +44,13 @@
   }
 
   sb.auth.onAuthStateChange((evento, s) => {
+    const anterior = sessao && sessao.user.id;
     sessao = s;
+    if (anterior && (!s || s.user.id !== anterior)) {   // mudou de conta: limpa tudo o que era da conta anterior
+      carrinho = []; LL.gravarLocal('ll_carrinho', []); perfil = null;
+      if (chatAtivo) { chatAtivo.parar(); chatAtivo = null; }
+      mConta.corpo.replaceChildren(); mConta.fechar(); renderCarrinho();
+    }
     setTimeout(() => {                       // fora do callback, como recomenda o Supabase
       if (evento === 'PASSWORD_RECOVERY') abrirNovaSenha();
       if (s) carregarPerfil(); else { perfil = null; pararAvisos(); renderTopo(); }
@@ -351,8 +357,12 @@
 
   async function contaPedidos(c) {
     c.replaceChildren(h('div', { class: 'text-body-secondary small', text: 'A carregar pedidos…' }));
-    const [p, e] = await Promise.all([sb.from('pedidos').select('*').order('criado', { ascending: false }), sb.from('entregas').select('*').order('criado')]);
+    // Filtra SEMPRE pela conta atual: o administrador tem acesso a tudo, mas na área de cliente só vê o que é dele.
+    const uid = sessao.user.id;
+    const p = await sb.from('pedidos').select('*').eq('cliente_id', uid).order('criado', { ascending: false });
     if (p.error) { c.replaceChildren(h('p', { class: 'text-danger', text: LL.erro(p.error) })); return; }
+    const ids = p.data.map(x => x.id);
+    const e = ids.length ? await sb.from('entregas').select('*').in('pedido_id', ids).order('criado') : { data: [] };
     if (!p.data.length) { c.replaceChildren(h('div', { class: 'vazio' }, h('p', { text: 'Ainda não fez nenhum pedido.' }), h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'modal', text: 'Ver serviços' }))); return; }
     c.replaceChildren(h('div', { class: 'd-grid gap-3' }, p.data.map(ped => cartaoPedido(ped, (e.data || []).filter(x => x.pedido_id === ped.id), c))));
   }
