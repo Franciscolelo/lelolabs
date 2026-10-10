@@ -33,7 +33,7 @@
       sb.from('loja').select('dados').eq('id', 1).maybeSingle(),
       sb.from('produtos').select('*').eq('ativo', true).order('ordem').order('criado'),
       sb.from('trabalhos').select('*').order('ordem').order('criado', { ascending: false }),
-      sb.from('avaliacoes').select('id,nome_publico,servicos,estrelas,recomenda,comentario,resposta,criado').eq('visivel', true).order('criado', { ascending: false }).limit(200),
+      sb.from('avaliacoes').select('id,produto_id,nome_publico,servicos,estrelas,recomenda,comentario,resposta,criado').eq('visivel', true).order('criado', { ascending: false }).limit(200),
       sb.rpc('contar_gostos')
     ]);
     avaliacoes = av.data || []; gostosTotal = {}; (gt.data || []).forEach(g => { gostosTotal[g.trabalho_id] = Number(g.total); });
@@ -156,13 +156,34 @@
         h('div', null, h('h3', { class: 'h5 mb-1' }, LL.destacar(p.nome, termos)), h('p', { class: 'text-body-secondary mb-0 recorte' }, LL.destacar(p.descricao, termos))),
         (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.slice(0, 4).map(i => h('li', null, LL.destacar(i, termos)))) : null,
         h('div', { class: 'mt-auto d-flex align-items-end justify-content-between gap-2 flex-wrap' },
-          h('div', null, h('div', { class: 'preco', text: LL.kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade })),
+          h('div', null, h('div', { class: 'preco', text: LL.kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade }), resumoNota(p)),
           h('div', { class: 'd-flex gap-2' },
             h('button', { class: 'btn btn-outline-secondary', type: 'button', onclick: () => abrirDetalhe(p), text: 'Detalhes' }),
             h('button', { class: 'btn ' + (no ? 'btn-outline-primary' : 'btn-primary'), type: 'button', onclick: () => adicionar(p.id) }, no ? 'Mais 1 (' + no.qtd + ')' : 'Adicionar')))));
   }
 
-  function abrirDetalhe(p) {
+  // Avaliações de um serviço específico
+  const avaliacoesDe = id => avaliacoes.filter(a => a.produto_id === id);
+  function resumoNota(p) {
+    const lista = avaliacoesDe(p.id); if (!lista.length) return null;
+    const m = lista.reduce((s, a) => s + a.estrelas, 0) / lista.length;
+    return h('button', { class: 'btn btn-link btn-sm p-0 text-decoration-none nota-produto', type: 'button', onclick: () => abrirDetalhe(p, true), 'aria-label': 'Ver ' + lista.length + ' avaliações de ' + p.nome },
+      h('span', { class: 'estrelas', text: '★' }), ' ' + m.toFixed(1).replace('.', ',') + ' (' + lista.length + ')');
+  }
+  function blocoAvaliacoesProduto(p) {
+    const lista = avaliacoesDe(p.id), n = lista.length;
+    if (!n) return h('div', { class: 'small text-body-secondary', text: 'Este serviço ainda não tem avaliações.' });
+    const m = lista.reduce((s, a) => s + a.estrelas, 0) / n, rec = Math.round(lista.filter(a => a.recomenda).length / n * 100);
+    return h('div', { class: 'd-grid gap-3', id: 'aval-produto' },
+      h('div', { class: 'd-flex align-items-center gap-3 flex-wrap' }, h('span', { class: 'media-aval', text: m.toFixed(1).replace('.', ',') }),
+        h('div', null, estrelas(Math.round(m)), h('div', { class: 'small text-body-secondary', text: n + (n === 1 ? ' avaliação' : ' avaliações') + ' · ' + rec + '% recomendam' }))),
+      lista.map(a => h('div', { class: 'border-top pt-2 d-grid gap-1' },
+        h('div', { class: 'd-flex gap-2 align-items-center flex-wrap' }, h('strong', { text: a.nome_publico }), estrelas(a.estrelas), h('span', { class: 'small ' + (a.recomenda ? 'text-success' : 'text-body-secondary'), text: a.recomenda ? '👍 Recomenda' : 'Não recomenda' }), h('span', { class: 'small text-body-secondary ms-auto', text: new Date(a.criado).toLocaleDateString('pt-PT') })),
+        a.comentario ? h('p', { class: 'mb-0', text: a.comentario }) : null,
+        a.resposta ? h('div', { class: 'resposta-aval small' }, h('strong', { text: 'Resposta: ' }), a.resposta) : null)));
+  }
+
+  function abrirDetalhe(p, irParaAvaliacoes) {
     mDetalhe.titulo(p.nome);
     mDetalhe.corpo.replaceChildren(h('div', { class: 'd-grid gap-3' },
       LL.galeria(p.imagens, p.nome, 'capa-grande'),
@@ -170,8 +191,10 @@
         h('div', null, h('span', { class: 'etiqueta', text: p.categoria }), h('div', { class: 'preco mt-2', text: LL.kz(p.preco) }), h('div', { class: 'small text-body-secondary', text: p.unidade })),
         h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: () => { adicionar(p.id); mDetalhe.fechar(); } }, LL.icone('carrinho'), ' Adicionar ao carrinho')),
       p.descricao ? h('p', { class: 'mb-0', text: p.descricao }) : null,
-      (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.map(i => h('li', { text: i }))) : null));
+      (p.itens || []).length ? h('ul', { class: 'lista-itens' }, p.itens.map(i => h('li', { text: i }))) : null,
+      h('div', { class: 'border-top pt-3' }, h('h3', { class: 'h5', text: 'Avaliações deste serviço' }), blocoAvaliacoesProduto(p))));
     mDetalhe.abrir();
+    if (irParaAvaliacoes) setTimeout(() => { const el = document.getElementById('aval-produto'); if (el) el.scrollIntoView({ behavior: 'smooth' }); }, 450);
   }
 
   function secTrabalhos() {
@@ -213,24 +236,25 @@
         : h('div', { class: 'vazio', text: 'Ainda não há avaliações. Depois de concluir o seu projeto, pode deixar a sua opinião na sua conta.' })));
   }
 
-  function formAvaliacao(p, atual, contentor) {
+  function formAvaliacao(p, item, atual, contentor) {
+    const chave = p.id.slice(0, 8) + '-' + String(item.id).slice(0, 8);
     let est = atual ? atual.estrelas : 5, rec = atual ? atual.recomenda : true;
     const msg = h('div', { class: 'small', role: 'status' });
     const grupoEst = h('div', { class: 'escolher-estrelas', role: 'radiogroup', 'aria-label': 'Estrelas' });
     const desenhar = () => grupoEst.replaceChildren(...[1, 2, 3, 4, 5].map(n => h('button', { type: 'button', role: 'radio', 'aria-checked': String(n === est), 'aria-label': n + ' estrelas', class: n <= est ? 'on' : '', onclick: () => { est = n; desenhar(); }, text: '★' })));
     desenhar();
-    const recSim = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + p.id, id: 'rec-s-' + p.id }); recSim.checked = rec;
-    const recNao = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + p.id, id: 'rec-n-' + p.id }); recNao.checked = !rec;
+    const recSim = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + chave, id: 'rec-s-' + chave }); recSim.checked = rec;
+    const recNao = h('input', { class: 'btn-check', type: 'radio', name: 'rec-' + chave, id: 'rec-n-' + chave }); recNao.checked = !rec;
     recSim.addEventListener('change', () => { rec = true; }); recNao.addEventListener('change', () => { rec = false; });
-    const com = h('textarea', { class: 'form-control', rows: '3', maxlength: '1000', id: 'com-' + p.id, placeholder: 'Conte como correu: qualidade, prazo, atendimento…' }); com.value = atual ? atual.comentario : '';
+    const com = h('textarea', { class: 'form-control', rows: '3', maxlength: '1000', id: 'com-' + chave, placeholder: 'Conte como correu: qualidade, prazo, atendimento…' }); com.value = atual ? atual.comentario : '';
     return h('form', { class: 'caixa-suave rounded-3 p-3 d-grid gap-2', onsubmit: async e => {
       e.preventDefault(); msg.className = 'small'; msg.textContent = 'A guardar…';
       const dados = { estrelas: est, recomenda: rec, comentario: com.value.trim() };
-      const r = atual ? await sb.from('avaliacoes').update(dados).eq('id', atual.id) : await sb.from('avaliacoes').insert(Object.assign({ pedido_id: p.id }, dados));
+      const r = atual ? await sb.from('avaliacoes').update(dados).eq('id', atual.id) : await sb.from('avaliacoes').insert(Object.assign({ pedido_id: p.id, produto_id: item.id }, dados));
       if (r.error) { msg.className = 'small text-danger'; msg.textContent = LL.erro(r.error); return; }
       LL.aviso('Obrigado pela sua avaliação!'); contaPedidos(contentor); carregar();
     } },
-      h('div', { class: 'fw-semibold', text: atual ? 'A sua avaliação' : 'Avalie este projeto' }), grupoEst,
+      h('div', { class: 'fw-semibold', text: (atual ? 'A sua avaliação de ' : 'Avalie: ') + item.nome }), grupoEst,
       h('div', { class: 'd-flex gap-2 flex-wrap' }, recSim, h('label', { class: 'btn btn-sm btn-outline-success', for: recSim.id, text: '👍 Recomendo' }), recNao, h('label', { class: 'btn btn-sm btn-outline-secondary', for: recNao.id, text: 'Não recomendo' })),
       h('label', { class: 'visually-hidden', for: com.id, text: 'Comentário' }), com,
       atual && atual.resposta ? h('div', { class: 'resposta-aval small' }, h('strong', { text: 'Resposta: ' }), atual.resposta) : null,
@@ -430,7 +454,7 @@
     const ids = p.data.map(x => x.id);
     const e = ids.length ? await sb.from('entregas').select('*').in('pedido_id', ids).order('criado') : { data: [] };
     minhasAvaliacoes = {};
-    if (ids.length) { const av = await sb.from('avaliacoes').select('*').eq('cliente_id', uid); (av.data || []).forEach(a => { minhasAvaliacoes[a.pedido_id] = a; }); }
+    if (ids.length) { const av = await sb.from('avaliacoes').select('*').eq('cliente_id', uid); (av.data || []).forEach(a => { minhasAvaliacoes[a.pedido_id + ':' + (a.produto_id || '')] = a; }); }
     if (!p.data.length) { c.replaceChildren(h('div', { class: 'vazio' }, h('p', { text: 'Ainda não fez nenhum pedido.' }), h('a', { class: 'btn btn-primary', href: '#loja', 'data-bs-dismiss': 'modal', text: 'Ver serviços' }))); return; }
     c.replaceChildren(h('div', { class: 'd-grid gap-3' }, p.data.map(ped => cartaoPedido(ped, (e.data || []).filter(x => x.pedido_id === ped.id), c))));
   }
@@ -471,7 +495,7 @@
       p.estado === 'concluido' ? h('div', { class: 'd-grid gap-2' }, h('div', { class: 'fw-semibold', text: 'Ficheiros do projeto' }),
         entregas.length ? entregas.map(en => h('button', { class: 'btn btn-outline-primary text-start d-flex align-items-center gap-2', type: 'button', onclick: () => LL.abrirPrivado('entregas', en.path, true) }, LL.icone('descarregar'), h('span', { class: 'flex-grow-1 text-truncate', text: en.nome }), h('span', { class: 'small mono', text: LL.tamanho(en.tamanho) })))
           : h('div', { class: 'small text-body-secondary', text: 'O projeto foi entregue. Veja a conversa para mais detalhes.' })) : null,
-      p.estado === 'concluido' ? formAvaliacao(p, minhasAvaliacoes[p.id], contentor) : null,
+      p.estado === 'concluido' ? h('div', { class: 'd-grid gap-2' }, p.itens.map(i => formAvaliacao(p, i, minhasAvaliacoes[p.id + ':' + i.id], contentor))) : null,
       h('div', null, h('button', { class: 'btn btn-link btn-sm px-0', type: 'button', onclick: () => { abrirConta.texto = 'Sobre o pedido ' + p.codigo + ': '; abrirConta('conversa'); } }, LL.icone('chat', 14), ' Falar sobre este pedido'))));
   }
 

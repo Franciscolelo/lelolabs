@@ -227,3 +227,5 @@ button.kpi:hover{border-color:var(--acento)}
 .btn-gosto{border:1px solid var(--linha);border-radius:999px;color:var(--tinta);font-weight:600}
 .btn-gosto.ativo{border-color:#D6336C;color:#D6336C;background:rgba(214,51,108,.08)}
 .btn-gosto:hover{border-color:#D6336C}
+.nota-produto{font-size:.85rem;color:var(--tinta)}
+.nota-produto:hover{text-decoration:underline!important}

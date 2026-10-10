@@ -322,11 +322,18 @@ create table if not exists public.avaliacoes (
   criado timestamptz not null default now()
 );
 alter table public.avaliacoes enable row level security;
+-- Avaliação por serviço: um cliente avalia cada serviço de cada pedido concluído
+alter table public.avaliacoes add column if not exists produto_id uuid references public.produtos(id) on delete set null;
+alter table public.avaliacoes drop constraint if exists avaliacoes_pedido_id_key;
+create unique index if not exists avaliacoes_pedido_produto on public.avaliacoes (pedido_id, produto_id);
+create index if not exists avaliacoes_produto on public.avaliacoes (produto_id);
 drop policy if exists "avaliacoes: leitura pública das visíveis" on public.avaliacoes;
 create policy "avaliacoes: leitura pública das visíveis" on public.avaliacoes for select using (visivel or cliente_id = auth.uid() or public.e_admin());
 drop policy if exists "avaliacoes: cliente avalia pedido concluído" on public.avaliacoes;
 create policy "avaliacoes: cliente avalia pedido concluído" on public.avaliacoes for insert to authenticated with check (
-  cliente_id = auth.uid() and exists (select 1 from public.pedidos p where p.id = pedido_id and p.cliente_id = auth.uid() and p.estado = 'concluido'));
+  cliente_id = auth.uid()
+  and exists (select 1 from public.pedidos p where p.id = pedido_id and p.cliente_id = auth.uid() and p.estado = 'concluido'
+              and (produto_id is null or exists (select 1 from jsonb_array_elements(p.itens) i where i->>'id' = produto_id::text))));
 drop policy if exists "avaliacoes: editar a própria ou admin" on public.avaliacoes;
 create policy "avaliacoes: editar a própria ou admin" on public.avaliacoes for update using (cliente_id = auth.uid() or public.e_admin());
 drop policy if exists "avaliacoes: admin apaga" on public.avaliacoes;
@@ -343,7 +350,8 @@ begin
     select nome into n from public.perfis where id = new.cliente_id;
     partes := regexp_split_to_array(trim(coalesce(n, '')), '\s+');
     new.nome_publico := coalesce(nullif(partes[1], ''), 'Cliente') || case when array_length(partes, 1) > 1 then ' ' || left(partes[array_length(partes, 1)], 1) || '.' else '' end;
-    select coalesce(string_agg(i->>'nome', ', '), '') into new.servicos from public.pedidos p, jsonb_array_elements(p.itens) i where p.id = new.pedido_id;
+    select coalesce(string_agg(i->>'nome', ', '), '') into new.servicos from public.pedidos p, jsonb_array_elements(p.itens) i
+      where p.id = new.pedido_id and (new.produto_id is null or i->>'id' = new.produto_id::text);
     new.resposta := ''; new.visivel := true; new.criado := now();
   elsif not public.e_admin() then
     new.resposta := old.resposta; new.visivel := old.visivel;
